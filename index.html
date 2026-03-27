@@ -531,7 +531,7 @@ async function extractBankStatement(){
     // Moniepoint — raw-text ordinal-position parser (Settlement Credit column)
     if(!Object.keys(monthly).length &&
        (bank==='Moniepoint'||ft.includes('moniepoint'))){
-      monthly = parseMoniepoint(pages.map(p=>p.rawText));
+      monthly = parseMoniepoint(pages);
     }
     // Kuda — column-position layout parser
     if(!Object.keys(monthly).length &&
@@ -650,51 +650,53 @@ function addCredit(monthly,ym,amt){
 // Date is split across lines: "2025-" on one line, "MM-   accountName" on next.
 // We reconstruct YYYY-MM by tracking year fragments then scanning ahead for month.
 // ════════════════════════════════════════════════════════════════════════════
-function parseMoniepoint(rawPages){
+function parseMoniepoint(pages){
+  // Uses pages[].lines (y-coordinate grouped items from PDF.js) for accurate
+  // line detection — rawText has no real newlines so date parsing fails there.
   const monthly = {};
-  const fullText = rawPages.join('\n');
-  const lines = fullText.split('\n');
-
   let currentYM = null;
 
-  for(let i = 0; i < lines.length; i++){
-    const stripped = lines[i].trim();
+  for(const {lines} of pages){
+    for(let i = 0; i < lines.length; i++){
+      const stripped = lines[i].text.trim();
 
-    // Year-only fragment: "2025-" or "2026-"
-    const yearOnly = /^(20\d{2})-$/.exec(stripped);
-    if(yearOnly){
-      const year = yearOnly[1];
-      for(let j = i+1; j < Math.min(i+5, lines.length); j++){
-        const mm = /^(\d{2})-/.exec(lines[j].trim());
-        if(mm){ currentYM = `${year}-${mm[1]}`; break; }
+      // Year-only line: "2025-"
+      const yearOnly = /^(20\d{2})-$/.exec(stripped);
+      if(yearOnly){
+        const year = yearOnly[1];
+        // Next non-empty line starting with MM- is the month fragment
+        // Handles: "12-" (BBELL format) and "03-   accountName" (POS format)
+        for(let j = i+1; j < Math.min(i+6, lines.length); j++){
+          const mm = /^(\d{2})-/.exec(lines[j].text.trim());
+          if(mm){ currentYM = `${year}-${mm[1]}`; break; }
+        }
+        continue;
       }
-      continue;
-    }
 
-    // Combined year-month on one fragment: "2025-03-..."
-    const ymCombined = /^(20\d{2})-(0\d|1[0-2])-/.exec(stripped);
-    if(ymCombined){ currentYM = `${ymCombined[1]}-${ymCombined[2]}`; continue; }
+      if(!currentYM) continue;
 
-    if(!currentYM || lines[i].length < 160) continue;
+      // Data lines: collect all decimal numbers from this logical line
+      const lineText = lines[i].text;
+      if(lineText.length < 80) continue; // skip short non-data lines
 
-    const nums = [];
-    const numRe = /[\d,]+\.\d{2}/g;
-    let m;
-    while((m = numRe.exec(lines[i])) !== null){
-      nums.push(parseFloat(m[0].replace(/,/g, '')));
-    }
+      const nums = [];
+      const numRe = /[\d,]+\.\d{2}/g;
+      let m;
+      while((m = numRe.exec(lineText)) !== null){
+        nums.push(parseFloat(m[0].replace(/,/g, '')));
+      }
 
-    let credit = null;
-    // Format B: TxAmt present → SettDebit=0 at pos 1, SettCredit at pos 2
-    if(nums.length >= 5 && nums[1] === 0.0 && nums[2] > 0){
-      credit = nums[2];
+      let credit = null;
+      // Format B (6 nums): [TxAmt, 0.00, SettCredit, BalBefore, BalAfter, Charge]
+      if(nums.length >= 5 && nums[1] === 0.0 && nums[2] > 0){
+        credit = nums[2];
+      }
+      // Format A (4 nums): [0.00, SettCredit, BalBefore, BalAfter]
+      else if(nums.length === 4 && nums[0] === 0.0 && nums[1] > 0){
+        credit = nums[1];
+      }
+      if(credit) addCredit(monthly, currentYM, credit);
     }
-    // Format A: TxAmt absent → SettDebit=0 at pos 0, SettCredit at pos 1
-    // (FEE rows: nums[0]>0 and nums[1]==0 — opposite → correctly skipped)
-    else if(nums.length === 4 && nums[0] === 0.0 && nums[1] > 0){
-      credit = nums[1];
-    }
-    if(credit) addCredit(monthly, currentYM, credit);
   }
   return monthly;
 }
