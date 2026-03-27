@@ -483,29 +483,46 @@ async function extractBankStatement(){
     const loadingTask = pdfjsLib.getDocument({data:arrayBuffer, password});
     const pdf = await loadingTask.promise;
 
-    // Extract all page texts
+    // Extract all page texts (smart joining: no space between adjacent items)
     const pages=[];
     for(let i=1;i<=pdf.numPages;i++){
       const page = await pdf.getPage(i);
       const tc   = await page.getTextContent();
-      const text = tc.items.map(it=>it.str).join(' ');
-      pages.push(text);
+      // Join items: add space unless current item starts or prev ends with ₦ / digit continuation
+      let pageText = '';
+      for(let k=0;k<tc.items.length;k++){
+        const str = tc.items[k].str;
+        if(!str) continue;
+        if(k===0){ pageText+=str; continue; }
+        const prev = tc.items[k-1].str||'';
+        // No space needed between: ₦ and digits, or digit and . or ,
+        const noSpace = prev.endsWith('₦')||str.startsWith('₦')||
+                        (prev.match(/\d$/)&&str.match(/^[.,\d]/))||
+                        (prev.match(/[.,]$/)&&str.match(/^\d/));
+        pageText += (noSpace?'':' ') + str;
+      }
+      pages.push(pageText);
     }
     const fullText = pages.join('\n');
     const bank = detectBank(fullText);
 
     let monthly = {};
 
-    // Try parsers in order
-    if(bank==='PalmPay'||fullText.toLowerCase().includes('palmpay')){
+    // Try parsers in order — named banks first, then generic fallbacks
+    const ft = fullText.toLowerCase();
+    if(bank==='PalmPay'||ft.includes('palmpay')){
       monthly = parsePalmPay(pages);
+    }
+    if(!Object.keys(monthly).length && (bank==='OPay'||ft.includes('opay')||ft.includes('9payment'))){
+      monthly = parseOpay(pages);
     }
     if(!Object.keys(monthly).length && (bank.includes('Kuda')||bank==='Moniepoint')){
       monthly = parseKudaMoniepoint(pages);
     }
-    if(!Object.keys(monthly).length && bank==='Opay'){
-      monthly = parseOpay(pages);
+    if(!Object.keys(monthly).length && (bank==='Access Bank'||ft.includes('access bank'))){
+      monthly = parseRowTransaction(pages);
     }
+    // Generic fallbacks for all other banks (Zenith, GTB, Sterling, UBA etc.)
     if(!Object.keys(monthly).length){
       monthly = parseSummaryTable(fullText);
     }
@@ -513,10 +530,10 @@ async function extractBankStatement(){
       monthly = parseRowTransaction(pages);
     }
     if(!Object.keys(monthly).length){
-      monthly = parsePalmPay(pages);
+      monthly = parseKudaMoniepoint(pages);
     }
     if(!Object.keys(monthly).length){
-      monthly = parseKudaMoniepoint(pages);
+      monthly = parsePalmPay(pages);
     }
     if(!Object.keys(monthly).length){
       monthly = parseOpay(pages);
