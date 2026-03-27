@@ -500,7 +500,7 @@ async function extractBankStatement(){
     if(bank==='PalmPay'||fullText.toLowerCase().includes('palmpay')){
       monthly = parsePalmPay(pages);
     }
-    if(!Object.keys(monthly).length && (bank==='Kuda'||bank==='Moniepoint')){
+    if(!Object.keys(monthly).length && (bank.includes('Kuda')||bank==='Moniepoint')){
       monthly = parseKudaMoniepoint(pages);
     }
     if(!Object.keys(monthly).length && bank==='Opay'){
@@ -551,22 +551,28 @@ async function extractBankStatement(){
 
 function detectBank(text){
   const t=text.toLowerCase();
+  // Order matters — check specific names before generic ones
   if(t.includes('palmpay')) return 'PalmPay';
-  if(t.includes('kuda')) return 'Kuda';
+  if(t.includes('kuda mf bank')||t.includes('kudabank')||t.includes('kuda bank')) return 'Kuda MF Bank';
+  if(t.includes('kuda')) return 'Kuda MF Bank';
   if(t.includes('moniepoint')) return 'Moniepoint';
-  if(t.includes('opay')||t.includes('9payment')) return 'Opay';
+  if(t.includes('opay')||t.includes('9payment')||t.includes('o-pay')) return 'OPay';
   if(t.includes('zenith')) return 'Zenith Bank';
-  if(t.includes('guaranty trust')||t.includes('gtbank')) return 'GTBank';
+  if(t.includes('guaranty trust')||t.includes('gtbank')||t.includes('gt bank')) return 'GTBank';
   if(t.includes('access bank')) return 'Access Bank';
-  if(t.includes('united bank for africa')) return 'UBA';
+  if(t.includes('united bank for africa')||t.includes('uba')) return 'UBA';
   if(t.includes('first bank')||t.includes('firstbank')) return 'First Bank';
-  if(t.includes('sterling')) return 'Sterling Bank';
-  if(t.includes('stanbic')) return 'Stanbic IBTC';
-  if(t.includes('fidelity')) return 'Fidelity Bank';
+  if(t.includes('sterling bank')||t.includes('sterling')) return 'Sterling Bank';
+  if(t.includes('stanbic ibtc')||t.includes('stanbic')) return 'Stanbic IBTC';
+  if(t.includes('fidelity bank')||t.includes('fidelity')) return 'Fidelity Bank';
+  if(t.includes('polaris')) return 'Polaris Bank';
   if(t.includes('wema')) return 'Wema Bank';
   if(t.includes('union bank')) return 'Union Bank';
+  if(t.includes('keystone')) return 'Keystone Bank';
   if(t.includes('fcmb')) return 'FCMB';
   if(t.includes('ecobank')) return 'Ecobank';
+  if(t.includes('jaiz')) return 'Jaiz Bank';
+  if(t.includes('providus')) return 'Providus Bank';
   return 'Unknown Bank';
 }
 
@@ -600,29 +606,52 @@ function parsePalmPay(pages){
   return monthly;
 }
 
-// ── Kuda / Moniepoint App: DD/MM/YY ₦amount inward/local ─────────────────────
+// ── Kuda / Moniepoint App: multi-line transaction parser ─────────────────────
+// Format per transaction (lines stacked vertically in PDF):
+//   Line 1: DD/MM/YY  (date only)
+//   Line 2: HH:MM:SS  (time)
+//   Line 3: ₦amount category description...
 function parseKudaMoniepoint(pages){
   const monthly={};
   const seen=new Set();
-  const linePat=/^(\d{2})\/(\d{2})\/(\d{2,4})\s+₦([\d,]+\.?\d*)\s+(.*)/;
-  const CREDIT_FIRST=['inward','local'];
+  const CREDIT_KW=['inward','local','transfer from','received','credit'];
+  const DEBIT_KW=['outward','spend','bills','airtime','data','repayment','disbursement','withdrawal','debit','sent'];
   const CBN_SKIP=['stamp','levy','duty','electronic'];
 
   for(const text of pages){
-    for(const line of text.split('\n')){
-      const m=linePat.exec(line.trim());
-      if(!m) continue;
-      const [,day,mon,yr,amtStr,rest]=m;
-      const key=line.trim().slice(0,80);
+    const lines=text.split('\n').map(l=>l.trim()).filter(Boolean);
+
+    for(let i=0;i<lines.length;i++){
+      // Detect date line: DD/MM/YY or DD/MM/YYYY (date ONLY, no other content)
+      const dateMatch=lines[i].match(/^(\d{2})\/(\d{2})\/(\d{2,4})$/);
+      if(!dateMatch) continue;
+
+      const mon=dateMatch[2];
+      const yr=dateMatch[3].length===4?dateMatch[3]:'20'+dateMatch[3];
+      const ym=`${yr}-${String(parseInt(mon)).padStart(2,'0')}`;
+
+      // Dedup
+      const key=lines[i]+(lines[i+2]||'');
       if(seen.has(key)) continue;
       seen.add(key);
-      const fullYr=yr.length===4?yr:'20'+yr;
-      const ym=`${fullYr}-${String(parseInt(mon)).padStart(2,'0')}`;
-      const amt=parseFloat(amtStr.replace(/,/g,''));
-      const firstWord=(rest.split(' ')[0]||'').toLowerCase();
-      const rl=rest.toLowerCase();
-      if(rl.includes('cbn')&&CBN_SKIP.some(w=>rl.includes(w))) continue;
-      if(CREDIT_FIRST.includes(firstWord)&&amt>0) addCredit(monthly,ym,amt);
+
+      // Look ahead up to 5 lines for ₦amount line
+      for(let j=i+1;j<i+6&&j<lines.length;j++){
+        const amtMatch=lines[j].match(/₦([\d,]+\.\d{2})/);
+        if(!amtMatch) continue;
+
+        const amt=parseFloat(amtMatch[1].replace(/,/g,''));
+        const lower=lines[j].toLowerCase();
+
+        // Skip CBN stamp duty fees
+        if(lower.includes('cbn')&&CBN_SKIP.some(w=>lower.includes(w))) break;
+
+        const isCredit=CREDIT_KW.some(kw=>lower.includes(kw));
+        const isDebit=DEBIT_KW.some(kw=>lower.includes(kw));
+
+        if(isCredit&&!isDebit&&amt>0) addCredit(monthly,ym,amt);
+        break;
+      }
     }
   }
   return monthly;
