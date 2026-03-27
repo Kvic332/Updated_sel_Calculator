@@ -233,7 +233,7 @@ const MONTH_MAP  = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10
   }
 })();
 
-// ─── Calculator Logic (translated from Python) ────────────────────────────────
+// ─── Calculator Logic ─────────────────────────────────────────────────────────
 function getInterestRate(a, location, productType){
   if(productType==='NTB'){
     if(location==='Lagos'){
@@ -327,7 +327,6 @@ function pvCalc(rate, nper, pmt){
 }
 
 function roundUp1000(n){ return Math.ceil(n/1000)*1000; }
-
 function fmt(n){ return '₦'+Math.round(n).toLocaleString('en-NG'); }
 function fmtPct(n){ return n?(n*100).toFixed(2)+'%':'—'; }
 
@@ -388,7 +387,6 @@ function calculate(inflows,counts,location,productType,tenor,otherLoans,requeste
   return{newLoan,appTurnover,totalTurnover,dti,intRate,repFreq,displayRep,maxTotalRep,decision,approved,rateForPV,requested};
 }
 
-// ─── Run calculation ──────────────────────────────────────────────────────────
 function runCalculation(){
   const inflows=[], counts=[];
   for(let i=1;i<=6;i++){
@@ -470,7 +468,7 @@ function showPDFStatus(msg,type){
 }
 function hidePDFStatus(){ document.getElementById('pdf-status').style.display='none'; }
 
-// ─── PDF Parser (all banks, pure JS) ─────────────────────────────────────────
+// ─── PDF Extraction — layout-aware using PDF.js character positions ───────────
 async function extractBankStatement(){
   if(!pdfFile){ showPDFStatus('Please select a PDF file first.','error'); return; }
   const password = document.getElementById('pdf-password').value||'';
@@ -483,60 +481,80 @@ async function extractBankStatement(){
     const loadingTask = pdfjsLib.getDocument({data:arrayBuffer, password});
     const pdf = await loadingTask.promise;
 
-    // Extract all page texts (smart joining: no space between adjacent items)
-    const pages=[];
+    // ── Extract pages as BOTH raw text (for regex) AND layout-aware lines ──
+    // For each page we build:
+    //   rawText  — space-joined for parsers that don't need column info
+    //   lines    — array of {text, items:[{str,x}]} preserving x-positions
+    const pages = [];
     for(let i=1;i<=pdf.numPages;i++){
       const page = await pdf.getPage(i);
       const tc   = await page.getTextContent();
-      // Join items: add space unless current item starts or prev ends with ₦ / digit continuation
-      let pageText = '';
-      for(let k=0;k<tc.items.length;k++){
-        const str = tc.items[k].str;
-        if(!str) continue;
-        if(k===0){ pageText+=str; continue; }
-        const prev = tc.items[k-1].str||'';
-        // No space needed between: ₦ and digits, or digit and . or ,
-        const noSpace = prev.endsWith('₦')||str.startsWith('₦')||
-                        (prev.match(/\d$/)&&str.match(/^[.,\d]/))||
-                        (prev.match(/[.,]$/)&&str.match(/^\d/));
-        pageText += (noSpace?'':' ') + str;
+      const vp   = page.getViewport({scale:1});
+
+      // Group items into lines by their y-coordinate (rounded to nearest 2pt)
+      const lineMap = new Map();
+      for(const item of tc.items){
+        if(!item.str.trim()) continue;
+        const y = Math.round(item.transform[5] / 2) * 2;
+        if(!lineMap.has(y)) lineMap.set(y,[]);
+        lineMap.get(y).push({str:item.str, x:item.transform[4]});
       }
-      pages.push(pageText);
+      // Sort lines top-to-bottom (higher y = higher on page in PDF coords)
+      const sortedLines = [...lineMap.entries()]
+        .sort((a,b)=>b[0]-a[0])
+        .map(([,items])=>({
+          items: items.sort((a,b)=>a.x-b.x),
+          text:  items.sort((a,b)=>a.x-b.x).map(i=>i.str).join(' ')
+        }));
+
+      // Also produce a flat raw-text string (for summary-table / legacy parsers)
+      let rawText='';
+      for(let k=0;k<tc.items.length;k++){
+        const str=tc.items[k].str; if(!str) continue;
+        if(k===0){rawText+=str;continue;}
+        const prev=tc.items[k-1].str||'';
+        const noSpace=prev.endsWith('₦')||str.startsWith('₦')||
+          (prev.match(/\d$/)&&str.match(/^[.,\d]/))||(prev.match(/[.,]$/)&&str.match(/^\d/));
+        rawText+=(noSpace?'':' ')+str;
+      }
+      pages.push({rawText, lines:sortedLines, width:vp.width});
     }
-    const fullText = pages.join('\n');
+
+    const fullText = pages.map(p=>p.rawText).join('\n');
     const bank = detectBank(fullText);
 
     let monthly = {};
 
-    // Try parsers in order — named banks first, then generic fallbacks
+    // ── Dispatcher: pick the best parser for detected bank ────────────────
     const ft = fullText.toLowerCase();
-    if(bank==='PalmPay'||ft.includes('palmpay')){
-      monthly = parsePalmPay(pages);
+
+    // Kuda & Moniepoint — column-position layout parser (NEW)
+    if(!Object.keys(monthly).length &&
+       (bank.includes('Kuda')||bank==='Moniepoint'||ft.includes('kuda')||ft.includes('moniepoint'))){
+      monthly = parseKudaLayout(pages);
     }
-    if(!Object.keys(monthly).length && (bank==='OPay'||ft.includes('opay')||ft.includes('9payment'))){
-      monthly = parseOpay(pages);
+    // PalmPay — column-position layout parser (NEW)
+    if(!Object.keys(monthly).length &&
+       (bank==='PalmPay'||ft.includes('palmpay'))){
+      monthly = parsePalmPayLayout(pages);
     }
-    if(!Object.keys(monthly).length && (bank.includes('Kuda')||bank==='Moniepoint')){
-      monthly = parseKudaMoniepoint(pages);
+    // OPay
+    if(!Object.keys(monthly).length &&
+       (bank==='OPay'||ft.includes('opay')||ft.includes('9payment'))){
+      monthly = parseOpay(pages.map(p=>p.rawText));
     }
-    if(!Object.keys(monthly).length && (bank==='Access Bank'||ft.includes('access bank'))){
-      monthly = parseRowTransaction(pages);
+    // Access Bank / GTB row transactions
+    if(!Object.keys(monthly).length &&
+       (bank==='Access Bank'||ft.includes('access bank')||bank==='GTBank'||ft.includes('gtbank'))){
+      monthly = parseRowTransaction(pages.map(p=>p.rawText));
     }
-    // Generic fallbacks for all other banks (Zenith, GTB, Sterling, UBA etc.)
+    // Generic summary table (Zenith, Sterling, UBA etc.)
     if(!Object.keys(monthly).length){
       monthly = parseSummaryTable(fullText);
     }
+    // Generic row transaction fallback
     if(!Object.keys(monthly).length){
-      monthly = parseRowTransaction(pages);
-    }
-    if(!Object.keys(monthly).length){
-      monthly = parseKudaMoniepoint(pages);
-    }
-    if(!Object.keys(monthly).length){
-      monthly = parsePalmPay(pages);
-    }
-    if(!Object.keys(monthly).length){
-      monthly = parseOpay(pages);
+      monthly = parseRowTransaction(pages.map(p=>p.rawText));
     }
 
     const sorted = Object.entries(monthly)
@@ -568,10 +586,8 @@ async function extractBankStatement(){
 
 function detectBank(text){
   const t=text.toLowerCase();
-  // Order matters — check specific names before generic ones
   if(t.includes('palmpay')) return 'PalmPay';
-  if(t.includes('kuda mf bank')||t.includes('kudabank')||t.includes('kuda bank')) return 'Kuda MF Bank';
-  if(t.includes('kuda')) return 'Kuda MF Bank';
+  if(t.includes('kuda mf bank')||t.includes('kudabank')||t.includes('kuda bank')||t.includes('kuda')) return 'Kuda MF Bank';
   if(t.includes('moniepoint')) return 'Moniepoint';
   if(t.includes('opay')||t.includes('9payment')||t.includes('o-pay')) return 'OPay';
   if(t.includes('zenith')) return 'Zenith Bank';
@@ -604,68 +620,97 @@ function addCredit(monthly,ym,amt){
   monthly[ym].count++;
 }
 
-// ── PalmPay: +amount pattern ──────────────────────────────────────────────────
-function parsePalmPay(pages){
-  const monthly={};
-  const datePat = /(\d{1,2})\/(\d{1,2})\/(20\d{2})/;
-  for(const text of pages){
-    for(const line of text.split(/\n|(?=\d{2}\/\d{2}\/20)/)){
-      const dm=datePat.exec(line);
-      if(!dm) continue;
-      const ym=`${dm[3]}-${String(parseInt(dm[1])).padStart(2,'0')}`;
-      const plus=/\+(\d[\d,]*\.?\d*)/.exec(line);
-      if(plus){
-        const amt=parseFloat(plus[1].replace(/,/g,''));
-        addCredit(monthly,ym,amt);
+// ════════════════════════════════════════════════════════════════════════════
+// NEW: Kuda / Moniepoint — layout-aware column parser
+// ════════════════════════════════════════════════════════════════════════════
+// How it works:
+//   Kuda PDFs render each transaction row as a single wide line with these
+//   approximate x-column zones (in PDF pts, 0 = left margin):
+//     Date/Time  : x ≈ 28–55
+//     Money In   : x ≈ 85–135    ← CREDIT column
+//     Money Out  : x ≈ 165–230   ← DEBIT column  (we IGNORE this)
+//     Category   : x ≈ 255+
+//   The trick: find ₦amount items whose x falls in the Money-In zone.
+//   We determine the zone boundary dynamically per page using the header row.
+// ════════════════════════════════════════════════════════════════════════════
+function parseKudaLayout(pages){
+  const monthly = {};
+  const DATE_RE  = /^(\d{2})\/(\d{2})\/(\d{2,4})$/;
+  const AMT_RE   = /^₦([\d,]+\.\d{2})$/;
+  const CBN_SKIP = ['stamp duty','levy','duty'];
+
+  for(const {lines} of pages){
+    // Find the header row "Date/Time  Money In  Money out  Category ..."
+    // to calibrate the Money-In column x-range for this page.
+    let moneyInMaxX = 160; // default split: items with x < 160 are "Money In"
+
+    for(const line of lines){
+      const txt = line.text.toLowerCase();
+      if(txt.includes('money in') && txt.includes('money out')){
+        // Locate x-position of "Money In" and "Money out" header items
+        const moneyInItem  = line.items.find(it=>it.str.toLowerCase().includes('money in'));
+        const moneyOutItem = line.items.find(it=>it.str.toLowerCase().includes('money out'));
+        if(moneyInItem && moneyOutItem){
+          // Mid-point between the two header positions = split boundary
+          moneyInMaxX = (moneyInItem.x + moneyOutItem.x) / 2;
+        }
+        break;
+      }
+    }
+
+    // Now scan every line for transaction rows
+    let currentYM = null;
+
+    for(const line of lines){
+      const items = line.items;
+      if(!items.length) continue;
+
+      // Check if first item is a date (DD/MM/YY)
+      const firstStr = items[0].str.trim();
+      const dm = DATE_RE.exec(firstStr);
+      if(dm){
+        const [,day,mon,yr] = dm;
+        const fullYr = yr.length===4 ? yr : '20'+yr;
+        currentYM = `${fullYr}-${mon.padStart(2,'0')}`;
+      }
+
+      if(!currentYM) continue;
+
+      // Skip CBN stamp duty lines
+      const lineLow = line.text.toLowerCase();
+      if(CBN_SKIP.some(s=>lineLow.includes(s))) continue;
+
+      // Find ₦amount items in the Money-In column zone
+      for(const item of items){
+        const am = AMT_RE.exec(item.str.trim());
+        if(am && item.x < moneyInMaxX){
+          const amt = parseFloat(am[1].replace(/,/g,''));
+          if(amt > 0) addCredit(monthly, currentYM, amt);
+        }
       }
     }
   }
   return monthly;
 }
 
-// ── Kuda / Moniepoint App ────────────────────────────────────────────────────
-// PDF.js format (spaces, no newlines): "DD/MM/YY ₦amount CATEGORY description ..."
-// Pattern works for both PDF.js and line-based extraction
-function parseKudaMoniepoint(pages){
-  const monthly={};
-  const seen=new Set();
-  const CREDIT_FIRST=['inward','local'];
-  const CBN_SKIP=['stamp','levy','duty','electronic'];
-
-  for(const text of pages){
-    // Match: DD/MM/YY ₦amount firstWord (date and amount on same token in PDF.js)
-    const pat=/(\d{2})\/(\d{2})\/(\d{2,4})\s+₦([\d,]+\.\d{2})\s+(\S+)/g;
-    let m;
-    while((m=pat.exec(text))!==null){
-      const [,day,mon,yr,amtStr,firstWord]=m;
-      const key=`${day}/${mon}/${yr}_${amtStr}`;
-      if(seen.has(key)) continue;
-      seen.add(key);
-      const fullYr=yr.length===4?yr:'20'+yr;
-      const ym=`${fullYr}-${String(parseInt(mon)).padStart(2,'0')}`;
-      const amt=parseFloat(amtStr.replace(/,/g,''));
-      const fw=firstWord.toLowerCase();
-      // Get surrounding context for CBN check
-      const ctx=text.slice(Math.max(0,m.index),m.index+120).toLowerCase();
-      const isCBN=ctx.includes('cbn')&&CBN_SKIP.some(w=>ctx.includes(w));
-      if(!isCBN&&CREDIT_FIRST.includes(fw)&&amt>0) addCredit(monthly,ym,amt);
-    }
-  }
-  return monthly;
+// ════════════════════════════════════════════════════════════════════════════
+// NEW: PalmPay — layout-aware column parser
+// ════════════════════════════════════════════════════════════════════════════
+// PalmPay has the same columnar layout as Kuda (it IS a Kuda-issued product).
+// The Money-In column appears before the Money-Out column.
+// We reuse the same header-calibration + column-zone logic.
+// ════════════════════════════════════════════════════════════════════════════
+function parsePalmPayLayout(pages){
+  // PalmPay uses the same layout as Kuda — delegate to the same parser
+  return parseKudaLayout(pages);
 }
 
-// ── Opay: credit rows where Debit="--" ───────────────────────────────────────
-// PDF.js joins text with spaces. Opay credit rows have "--" where debit should be.
-// Pattern: DATE TIME DATE description -- credit_amt balance_amt Mobile
-// This reliably distinguishes credits (debit="--") from debits (credit="--")
-function parseOpay(pages){
+// ─── OPay: credit rows where Debit="--" ──────────────────────────────────────
+function parseOpay(rawPages){
   const monthly={};
   const MONTH_LOCAL={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
-
-  for(const text of pages){
-    // Pattern matches full Opay transaction: date time valuedate desc -- creditamt
-    // The key: description has no decimal numbers, then "--" then the credit amount
-    const re = /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})\s+\d{2}:\d{2}:\d{2}\s+\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+20\d{2}\s+((?:(?!\d+\.\d{2}).)*?)--\s+([\d,]+\.\d{2})/gi;
+  for(const text of rawPages){
+    const re=/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})\s+\d{2}:\d{2}:\d{2}\s+\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+20\d{2}\s+((?:(?!\d+\.\d{2}).)*?)--\s+([\d,]+\.\d{2})/gi;
     let m;
     while((m=re.exec(text))!==null){
       const [,day,mon,yr,,amt]=m;
@@ -679,7 +724,7 @@ function parseOpay(pages){
   return monthly;
 }
 
-// ── Summary Table (Zenith, GTB, Sterling, Access Bank summary, etc.) ──────────
+// ─── Summary Table (Zenith, GTB, Sterling etc.) ───────────────────────────────
 function parseSummaryTable(fullText){
   const monthly={};
   const tokens=fullText.replace(/\n/g,' ').replace(/\s+/g,' ').split(' ');
@@ -703,15 +748,11 @@ function parseSummaryTable(fullText){
   return monthly;
 }
 
-// ── Row Transaction (Access Bank DD-MON-YY, GTB DD/MM/YYYY) ──────────────────
-// Handles PDF.js space-joined text: "DD-MON-YY DD-MON-YY description - credit balance"
-function parseRowTransaction(pages){
+// ─── Row Transaction (Access Bank DD-MON-YY, GTB DD/MM/YYYY) ─────────────────
+function parseRowTransaction(rawPages){
   const monthly={};
   const MONTH_LOCAL={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
-
-  for(const text of pages){
-    // Access Bank: DD-MON-YY DD-MON-YY description - credit_amt balance
-    // Credit rows have single "-" where debit should be
+  for(const text of rawPages){
     const accessPat=/(\d{2})-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-(\d{2})\s+\d{2}-(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-\d{2}\s+((?:(?!\d[\d,]*\.\d{2}).)*?)-\s+([\d,]+\.\d{2})/gi;
     let m;
     while((m=accessPat.exec(text))!==null){
@@ -722,8 +763,6 @@ function parseRowTransaction(pages){
       const v=parseFloat(amt.replace(/,/g,''));
       if(v>0) addCredit(monthly,ym,v);
     }
-
-    // GTB/First Bank: DD/MM/YYYY description (credit col)
     const gtbPat=/(\d{2})\/(\d{2})\/(20\d{2})\s+(?:\d{2}\/\d{2}\/20\d{2}\s+)?((?:(?!\d[\d,]*\.\d{2}).)*?)(?:\d[\d,]*\.\d{2}\s+)?-\s+([\d,]+\.\d{2})/g;
     while((m=gtbPat.exec(text))!==null){
       const [,day,mon,yr,,amt]=m;
@@ -734,7 +773,6 @@ function parseRowTransaction(pages){
   }
   return monthly;
 }
-
 
 function fillInflowFields(data){
   const previewRows=document.getElementById('pdf-preview-rows');
@@ -747,8 +785,10 @@ function fillInflowFields(data){
         <span style="font-size:12px;color:var(--green);text-align:right">₦${Math.round(v.credit).toLocaleString('en-NG')}</span>
       </div>`;
     const inflowEl=document.getElementById('inflow-'+(idx+1));
+    const countEl=document.getElementById('count-'+(idx+1));
     const lblEl=document.getElementById('lbl-'+(idx+1));
     if(inflowEl){ inflowEl.value=Math.round(v.credit); inflowEl.style.borderColor='var(--green)'; }
+    if(countEl&&v.count>0){ countEl.value=v.count; }
     if(lblEl) lblEl.textContent=v.label;
   });
   document.getElementById('pdf-preview').style.display='block';
