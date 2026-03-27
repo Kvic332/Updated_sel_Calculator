@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SEL Loan Eligibility Calculator</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+:root{--bg:#0a0f1e;--surface:#111827;--surface2:#1a2235;--border:#1e3a5f;--accent:#00d4ff;--accent2:#ff6b35;--green:#00e676;--red:#ff4444;--text:#e2e8f0;--muted:#64748b;--gold:#ffd700}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Space Mono',monospace;min-height:100vh;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,212,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,255,.03) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0}
+.wrapper{position:relative;z-index:1;max-width:900px;margin:0 auto;padding:40px 24px 80px}
+header{margin-bottom:48px;border-bottom:1px solid var(--border);padding-bottom:24px}
+.logo-tag{font-size:10px;letter-spacing:4px;color:var(--accent);text-transform:uppercase;margin-bottom:12px}
+h1{font-family:'DM Serif Display',serif;font-size:clamp(28px,5vw,48px);line-height:1.1;color:#fff}
+h1 em{color:var(--accent);font-style:italic}
+.subtitle{font-size:12px;color:var(--muted);margin-top:8px;letter-spacing:.5px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:600px){.grid-2{grid-template-columns:1fr}}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:28px;margin-bottom:24px;position:relative}
+.section-title{font-size:11px;letter-spacing:3px;color:var(--accent);text-transform:uppercase;margin-bottom:20px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+.section-title span{color:var(--muted);margin-left:8px;font-size:10px}
+label{display:block;font-size:10px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
+input,select{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:3px;color:var(--text);font-family:'Space Mono',monospace;font-size:13px;padding:10px 12px;outline:none;transition:border-color .2s}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(0,212,255,.1)}
+select option{background:var(--surface2)}
+.field{margin-bottom:16px}
+.btn{width:100%;background:transparent;border:1px solid var(--accent);color:var(--accent);font-family:'Space Mono',monospace;font-size:12px;letter-spacing:2px;text-transform:uppercase;padding:14px;border-radius:3px;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:10px}
+.btn:hover{background:rgba(0,212,255,.08);box-shadow:0 0 20px rgba(0,212,255,.15)}
+.btn-primary{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+.btn-primary:hover{background:#00b8d9;box-shadow:0 0 20px rgba(0,212,255,.3)}
+.results{display:none}
+.result-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px}
+.result-card{background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:16px}
+.result-card.highlight{border-color:var(--accent);box-shadow:0 0 20px rgba(0,212,255,.1)}
+.result-label{font-size:10px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
+.result-value{font-size:18px;color:var(--accent);font-weight:700}
+.result-value.green{color:var(--green)}
+.result-value.gold{color:var(--gold)}
+.result-value.red{color:var(--red)}
+.decision-banner{padding:16px 20px;border-radius:3px;margin-bottom:20px;font-size:13px;letter-spacing:1px}
+.decision-banner.approved{background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.3);color:var(--green)}
+.decision-banner.rejected{background:rgba(255,68,68,.08);border:1px solid rgba(255,68,68,.3);color:var(--red)}
+.drop-zone{border:2px dashed var(--border);border-radius:4px;padding:32px;text-align:center;cursor:pointer;transition:all .2s;position:relative}
+.drop-zone:hover,.drop-zone.drag-over{border-color:var(--accent);background:rgba(0,212,255,.04)}
+.drop-icon{font-size:28px;margin-bottom:8px;color:var(--muted)}
+.drop-label{font-size:12px;color:var(--text);margin-bottom:4px}
+.drop-sub{font-size:11px;color:var(--muted)}
+#file-input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.pdf-status{display:none;padding:12px 16px;border-radius:3px;font-size:12px;margin-top:12px}
+.pdf-preview{display:none;margin-top:16px}
+.pdf-preview-row{display:grid;grid-template-columns:80px 1fr 130px;gap:8px;align-items:center;background:var(--surface2);padding:8px 12px;border-radius:3px;border:1px solid var(--border);margin-bottom:6px}
+.month-row{display:grid;grid-template-columns:80px 1fr 100px;gap:12px;align-items:center;margin-bottom:10px}
+.month-label{font-size:11px;color:var(--muted)}
+.req-card{background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:16px;margin-top:12px}
+.req-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px}
+.req-row:last-child{border-bottom:none}
+.spinner{width:14px;height:14px;border:2px solid rgba(0,212,255,.3);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;display:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="wrapper">
+  <header>
+    <div class="logo-tag">▶ SEL Financial Toolkit</div>
+    <h1>Loan <em>Eligibility</em><br>Calculator</h1>
+    <div class="subtitle">Based on SEL Calculator — All Products &nbsp;|&nbsp; Auto-computes DTI, Repayment, Applicable Turnover &amp; Loan Amount</div>
+  </header>
+
+  <!-- 00: PDF Auto-fill -->
+  <div class="section">
+    <div class="section-title">00 — Bank Statement Auto-Fill <span>— Optional</span></div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:20px">Upload a PDF bank statement to automatically extract and fill monthly credit totals.</p>
+    <div class="grid-2">
+      <div>
+        <label>Upload Bank Statement (PDF)</label>
+        <div class="drop-zone" id="drop-zone" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
+          <input type="file" id="file-input" accept=".pdf" onchange="handleFileSelect(event)">
+          <div class="drop-icon" id="drop-icon">⬆</div>
+          <div class="drop-label" id="drop-label">Drop PDF here or click to browse</div>
+          <div class="drop-sub" id="drop-sub">Supports password-protected statements</div>
+        </div>
+      </div>
+      <div>
+        <div class="field">
+          <label>PDF Password (if encrypted)</label>
+          <input type="password" id="pdf-password" placeholder="Leave blank if not password protected">
+          <div style="font-size:11px;color:var(--muted);margin-top:6px">Enter the statement password then click Extract</div>
+        </div>
+        <button class="btn" onclick="extractBankStatement()">
+          <span class="spinner" id="extract-spinner"></span>
+          <span id="extract-btn-text">⊙&nbsp;&nbsp;Extract Monthly Credits</span>
+        </button>
+      </div>
+    </div>
+    <div class="pdf-status" id="pdf-status"></div>
+    <div class="pdf-preview" id="pdf-preview">
+      <div style="font-size:10px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:10px">Extracted Monthly Credits</div>
+      <div id="pdf-preview-rows"></div>
+    </div>
+  </div>
+
+  <!-- 01: Monthly Inflows -->
+  <div class="section">
+    <div class="section-title">01 — Monthly Inflows (Last 6 Months)</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:20px">Enter the credit amount and number of credits for each of the last 6 months.</p>
+    <div style="display:grid;grid-template-columns:80px 1fr 100px;gap:12px;align-items:center;margin-bottom:8px">
+      <span style="font-size:10px;color:var(--muted);letter-spacing:1px">MONTH</span>
+      <span style="font-size:10px;color:var(--muted);letter-spacing:1px">CREDIT AMOUNT (₦)</span>
+      <span style="font-size:10px;color:var(--muted);letter-spacing:1px">CREDITS</span>
+    </div>
+    <div id="inflow-rows"></div>
+  </div>
+
+  <!-- 02: Parameters -->
+  <div class="section">
+    <div class="section-title">02 — Loan Parameters</div>
+    <div class="grid-2">
+      <div class="field">
+        <label>Location</label>
+        <select id="location">
+          <option value="Lagos">Lagos</option>
+          <option value="Outside Lagos">Outside Lagos</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Product Type</label>
+        <select id="product-type">
+          <option value="NTB">NTB (New to Bank)</option>
+          <option value="RENEWAL">Renewal</option>
+          <option value="TOP-UP">Top-Up</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Tenor (Months)</label>
+        <select id="tenor">
+          <option value="4">4 Months</option>
+          <option value="6" selected>6 Months</option>
+          <option value="9">9 Months</option>
+          <option value="12">12 Months</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Other Monthly Loan Repayments (₦)</label>
+        <input type="number" id="other-loans" value="0" min="0">
+      </div>
+    </div>
+    <div class="field">
+      <label>Requested Loan Amount (₦) — Optional</label>
+      <input type="number" id="requested-loan" placeholder="e.g. 3000000">
+    </div>
+    <button class="btn btn-primary" onclick="runCalculation()" style="margin-top:8px">
+      <span class="spinner" id="calc-spinner"></span>
+      <span id="calc-btn-text">▶ &nbsp; Calculate Eligibility</span>
+    </button>
+  </div>
+
+  <!-- 03: Results -->
+  <div class="section results" id="results-section">
+    <div class="section-title">03 — Results</div>
+    <div class="decision-banner" id="decision-banner"></div>
+    <div class="result-grid">
+      <div class="result-card highlight">
+        <div class="result-label">New Loan Amount</div>
+        <div class="result-value" id="r-loan"></div>
+      </div>
+      <div class="result-card">
+        <div class="result-label">Applicable Turnover</div>
+        <div class="result-value green" id="r-turnover"></div>
+      </div>
+      <div class="result-card">
+        <div class="result-label">Total Turnover</div>
+        <div class="result-value green" id="r-total"></div>
+      </div>
+      <div class="result-card">
+        <div class="result-label">DTI</div>
+        <div class="result-value gold" id="r-dti"></div>
+      </div>
+      <div class="result-card">
+        <div class="result-label">Interest Rate</div>
+        <div class="result-value gold" id="r-rate"></div>
+      </div>
+      <div class="result-card">
+        <div class="result-label">Repayment Frequency</div>
+        <div class="result-value" id="r-freq"></div>
+      </div>
+      <div class="result-card">
+        <div class="result-label">Max Rep / Period</div>
+        <div class="result-value" id="r-rep"></div>
+      </div>
+      <div class="result-card">
+        <div class="result-label">Max Total Repayment</div>
+        <div class="result-value" id="r-totalrep"></div>
+      </div>
+    </div>
+    <div id="requested-section" style="display:none">
+      <div style="font-size:10px;letter-spacing:2px;color:var(--accent2);text-transform:uppercase;margin:20px 0 10px">Requested Loan Analysis</div>
+      <div class="req-card">
+        <div class="req-row"><span>Requested Amount</span><span id="req-amount" style="color:var(--text)"></span></div>
+        <div class="req-row"><span>DTI for Requested</span><span id="req-dti" style="color:var(--gold)"></span></div>
+        <div class="req-row"><span>Repayment / Period</span><span id="req-rep" style="color:var(--text)"></span></div>
+        <div class="req-row"><span>Interest Rate</span><span id="req-rate" style="color:var(--gold)"></span></div>
+        <div class="req-row"><span>vs Max Loan</span><span id="req-vs" style="color:var(--text)"></span></div>
+        <div class="req-row"><span>Status</span><span id="req-status"></span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── PDF.js setup ─────────────────────────────────────────────────────────────
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+// ─── Month labels ─────────────────────────────────────────────────────────────
+const MONTH_ABBR = {1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'};
+const MONTH_MAP  = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+
+// Build inflow rows
+(function buildInflowRows(){
+  const now = new Date();
+  const rows = document.getElementById('inflow-rows');
+  for(let i=1;i<=6;i++){
+    const d = new Date(now.getFullYear(), now.getMonth()-6+i, 1);
+    const lbl = MONTH_ABBR[d.getMonth()+1]+' '+String(d.getFullYear()).slice(2);
+    rows.innerHTML += `<div class="month-row">
+      <span class="month-label" id="lbl-${i}">${lbl}</span>
+      <input type="number" id="inflow-${i}" placeholder="e.g. 5,000,000" min="0">
+      <input type="number" id="count-${i}" value="12" min="1" max="60">
+    </div>`;
+  }
+})();
+
+// ─── Calculator Logic (translated from Python) ────────────────────────────────
+function getInterestRate(a, location, productType){
+  if(productType==='NTB'){
+    if(location==='Lagos'){
+      if(a>100000&&a<=199000) return 0.3561;
+      if(a>=200000&&a<=919999) return 0.1885;
+      if(a>=920000&&a<=1199999) return 0.1664;
+      if(a>=1200000) return 0.1376;
+    } else {
+      if(a>100000&&a<=199000) return 0.413;
+      if(a>=200000&&a<=299000) return 0.231;
+      if(a>=300000&&a<=749000) return 0.2079;
+      if(a>=750000&&a<=919999) return 0.1854;
+      if(a>=920000&&a<=1199999) return 0.1638;
+      if(a>=1200000) return 0.1376;
+    }
+  } else {
+    const isTopUp = productType==='TOP-UP';
+    if(location==='Lagos'){
+      if(a>100000&&a<=199000) return isTopUp?0.3561:0.213;
+      if(a>=200000&&a<=919999) return isTopUp?0.1885:0.1434;
+      if(a>=920000&&a<=1199999) return isTopUp?0.1664:0.1269;
+      if(a>=1200000) return isTopUp?0.1376:0.1077;
+    } else {
+      if(a>100000&&a<=199000) return isTopUp?0.413:0.213;
+      if(a>=200000&&a<=299000) return isTopUp?0.231:0.1434;
+      if(a>=300000&&a<=749000) return isTopUp?0.2079:0.1434;
+      if(a>=750000&&a<=919999) return isTopUp?0.1854:0.1434;
+      if(a>=920000&&a<=1199999) return isTopUp?0.1638:0.1269;
+      if(a>=1200000) return isTopUp?0.1376:0.1077;
+    }
+  }
+  return null;
+}
+
+function getRateFromMaxRep(a, location, productType){
+  if(productType==='NTB'){
+    if(location==='Lagos'){
+      if(a>100000&&a<=199000) return 0.396;
+      if(a>=200000&&a<=299000) return 0.222;
+      if(a>=300000&&a<=409000) return 0.1998;
+      if(a>=410000&&a<=619000) return 0.2052;
+      if(a>=620000&&a<=749000) return 0.1854;
+      if(a>=750000&&a<=919000) return 0.1854;
+      if(a>=920000&&a<=1190000) return 0.1638;
+      if(a>=1220000) return 0.1557;
+    } else {
+      if(a>100000&&a<=199000) return 0.413;
+      if(a>=200000&&a<=299000) return 0.231;
+      if(a>=300000&&a<=409000) return 0.2079;
+      if(a>=410000&&a<=619000) return 0.2079;
+      if(a>=620000&&a<=749000) return 0.2079;
+      if(a>=750000&&a<=919000) return 0.1854;
+      if(a>=920000&&a<=1190000) return 0.1638;
+      if(a>=1220000) return 0.1557;
+    }
+  } else {
+    const isTopUp = productType==='TOP-UP';
+    if(location==='Lagos'){
+      if(a>100000&&a<=199000) return isTopUp?0.2683:0.1777;
+      if(a>=200000&&a<=299000) return isTopUp?0.1707:0.1447;
+      if(a>=300000&&a<=409000) return isTopUp?0.1544:0.1306;
+      if(a>=410000&&a<=1190000) return isTopUp?0.1343:0.1132;
+      if(a>=1220000) return isTopUp?0.1343:0.1132;
+    } else {
+      if(a>100000&&a<=199000) return isTopUp?0.2683:0.1777;
+      if(a>=200000&&a<=299000) return isTopUp?0.1707:0.1447;
+      if(a>=300000&&a<=409000) return isTopUp?0.1544:0.1306;
+      if(a>=410000&&a<=1190000) return isTopUp?0.1343:0.1132;
+      if(a>=1220000) return isTopUp?0.1343:0.1132;
+    }
+  }
+  return null;
+}
+
+function getDTI(totalTurnover, productType){
+  if(productType==='NTB') return 0.08;
+  if(productType==='RENEWAL'||productType==='TOP-UP') return totalTurnover>=801000?0.1:0.0;
+  return 0.0;
+}
+
+function getApplicableTurnover(inflows, productType){
+  const total = inflows.reduce((a,b)=>a+b,0);
+  const avg   = total/inflows.length;
+  const trimmed = (total-Math.min(...inflows)-Math.max(...inflows))/4;
+  return productType==='NTB'?Math.min(avg,trimmed):avg;
+}
+
+function pvCalc(rate, nper, pmt){
+  if(rate===0) return pmt*nper;
+  return pmt*(1-Math.pow(1+rate,-nper))/rate;
+}
+
+function roundUp1000(n){ return Math.ceil(n/1000)*1000; }
+
+function fmt(n){ return '₦'+Math.round(n).toLocaleString('en-NG'); }
+function fmtPct(n){ return n?(n*100).toFixed(2)+'%':'—'; }
+
+function calculate(inflows,counts,location,productType,tenor,otherLoans,requestedLoan){
+  const WEEKS = 4.33333;
+  const totalTurnover = inflows.reduce((a,b)=>a+b,0);
+  const avgCount = counts.reduce((a,b)=>a+b,0)/counts.length;
+  const repFreq = avgCount>=12?'Weekly':'Monthly';
+  const appTurnover = getApplicableTurnover(inflows,productType);
+  const dti = getDTI(totalTurnover,productType);
+  const maxRepMonthly = Math.max((appTurnover*dti)-otherLoans,0);
+  const maxTotalRep = maxRepMonthly*tenor;
+  const rateForPV = getRateFromMaxRep(maxTotalRep,location,productType);
+
+  let newLoan = 0;
+  if(rateForPV&&maxRepMonthly>0){
+    const pv = pvCalc(rateForPV,tenor,maxRepMonthly);
+    if(productType==='NTB'){
+      if(location==='Lagos'){
+        if(pv>=100000&&pv<=10000000) newLoan=roundUp1000(pv);
+        else if(pv>10000000) newLoan=10000000;
+      } else {
+        if(pv>=200000&&pv<=7000000) newLoan=roundUp1000(pv);
+        else if(pv>7000000) newLoan=7000000;
+      }
+    } else {
+      if(location==='Lagos'){
+        if(pv>=200000&&pv<=10000000) newLoan=roundUp1000(pv);
+        else if(pv>10000000) newLoan=10000000;
+      } else {
+        if(pv>=500000&&pv<=7000000) newLoan=roundUp1000(pv);
+        else if(pv>7000000) newLoan=7000000;
+      }
+    }
+  }
+
+  const intRate = newLoan>0?getInterestRate(newLoan,location,productType):null;
+  const displayRep = repFreq==='Weekly'?maxRepMonthly/WEEKS:maxRepMonthly;
+  const minLoan = location==='Lagos'?100000:(productType==='NTB'?200000:500000);
+  const maxLoan = location==='Lagos'?10000000:7000000;
+  const approved = newLoan>=minLoan&&newLoan<=maxLoan;
+  const decision = newLoan<minLoan?'Below product minimum':approved?'Max loan amount':'Invalid Loan Amount';
+
+  let requested = null;
+  if(requestedLoan&&requestedLoan>0){
+    const reqRateX36 = getInterestRate(requestedLoan,location,productType);
+    let reqPmtMonthly = 0;
+    if(rateForPV&&rateForPV>0) reqPmtMonthly=requestedLoan*rateForPV/(1-Math.pow(1+rateForPV,-tenor));
+    else if(rateForPV===0) reqPmtMonthly=requestedLoan/tenor;
+    const reqPmtDisplay = repFreq==='Weekly'?reqPmtMonthly/WEEKS:reqPmtMonthly;
+    const reqDTI = appTurnover>0?(reqPmtMonthly+otherLoans)/appTurnover:0;
+    const withinLimit = requestedLoan<=newLoan;
+    requested={amount:requestedLoan,dti:reqDTI,repayment:reqPmtDisplay,
+      interestRate:reqRateX36,vsMax:requestedLoan-newLoan,
+      withinLimit,status:withinLimit?'Below max — eligible':'Above max — not eligible'};
+  }
+
+  return{newLoan,appTurnover,totalTurnover,dti,intRate,repFreq,displayRep,maxTotalRep,decision,approved,rateForPV,requested};
+}
+
+// ─── Run calculation ──────────────────────────────────────────────────────────
+function runCalculation(){
+  const inflows=[], counts=[];
+  for(let i=1;i<=6;i++){
+    inflows.push(parseFloat(document.getElementById('inflow-'+i).value)||0);
+    counts.push(parseInt(document.getElementById('count-'+i).value)||12);
+  }
+  const location    = document.getElementById('location').value;
+  const productType = document.getElementById('product-type').value;
+  const tenor       = parseInt(document.getElementById('tenor').value);
+  const otherLoans  = parseFloat(document.getElementById('other-loans').value)||0;
+  const requestedLoan = parseFloat(document.getElementById('requested-loan').value)||0;
+
+  const r = calculate(inflows,counts,location,productType,tenor,otherLoans,requestedLoan);
+
+  document.getElementById('results-section').style.display='block';
+  document.getElementById('results-section').scrollIntoView({behavior:'smooth'});
+
+  const banner = document.getElementById('decision-banner');
+  banner.className='decision-banner '+(r.approved?'approved':'rejected');
+  banner.textContent=(r.approved?'✅':'❌')+' '+r.decision;
+
+  document.getElementById('r-loan').textContent = fmt(r.newLoan);
+  document.getElementById('r-loan').className = 'result-value '+(r.approved?'green':'red');
+  document.getElementById('r-turnover').textContent = fmt(r.appTurnover);
+  document.getElementById('r-total').textContent    = fmt(r.totalTurnover);
+  document.getElementById('r-dti').textContent      = fmtPct(r.dti);
+  document.getElementById('r-rate').textContent     = r.intRate?fmtPct(r.intRate):'—';
+  document.getElementById('r-freq').textContent     = r.repFreq;
+  document.getElementById('r-rep').textContent      = fmt(r.displayRep);
+  document.getElementById('r-totalrep').textContent = fmt(r.maxTotalRep);
+
+  const reqSec = document.getElementById('requested-section');
+  if(r.requested){
+    reqSec.style.display='block';
+    document.getElementById('req-amount').textContent = fmt(r.requested.amount);
+    document.getElementById('req-dti').textContent    = fmtPct(r.requested.dti);
+    document.getElementById('req-rep').textContent    = fmt(r.requested.repayment);
+    document.getElementById('req-rate').textContent   = r.requested.interestRate?fmtPct(r.requested.interestRate):'—';
+    document.getElementById('req-vs').textContent     = (r.requested.vsMax>=0?'+':'')+fmt(Math.abs(r.requested.vsMax));
+    const statusEl = document.getElementById('req-status');
+    statusEl.textContent  = r.requested.status;
+    statusEl.style.color  = r.requested.withinLimit?'var(--green)':'var(--red)';
+  } else {
+    reqSec.style.display='none';
+  }
+}
+
+// ─── PDF File Handling ────────────────────────────────────────────────────────
+let pdfFile = null;
+
+function handleDragOver(e){ e.preventDefault(); document.getElementById('drop-zone').classList.add('drag-over'); }
+function handleDragLeave(){ document.getElementById('drop-zone').classList.remove('drag-over'); }
+function handleDrop(e){
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if(file&&file.name.toLowerCase().endsWith('.pdf')) setPDFFile(file);
+  else showPDFStatus('Please drop a valid PDF file.','error');
+}
+function handleFileSelect(e){ const f=e.target.files[0]; if(f) setPDFFile(f); }
+
+function setPDFFile(file){
+  pdfFile=file;
+  document.getElementById('drop-icon').textContent='✓';
+  document.getElementById('drop-icon').style.color='var(--green)';
+  document.getElementById('drop-label').innerHTML='<span style="color:var(--green);font-weight:700">'+file.name+'</span>';
+  document.getElementById('drop-sub').textContent=(file.size/1024).toFixed(0)+' KB — Ready to Extract';
+  document.getElementById('drop-zone').style.borderColor='var(--green)';
+  hidePDFStatus();
+}
+
+function showPDFStatus(msg,type){
+  const el=document.getElementById('pdf-status');
+  el.style.display='block';
+  el.style.background=type==='error'?'rgba(255,68,68,.08)':type==='success'?'rgba(0,230,118,.08)':'rgba(0,212,255,.08)';
+  el.style.border='1px solid '+(type==='error'?'rgba(255,68,68,.3)':type==='success'?'rgba(0,230,118,.3)':'rgba(0,212,255,.3)');
+  el.style.color=type==='error'?'var(--red)':type==='success'?'var(--green)':'var(--accent)';
+  el.textContent=msg;
+}
+function hidePDFStatus(){ document.getElementById('pdf-status').style.display='none'; }
+
+// ─── PDF Parser (all banks, pure JS) ─────────────────────────────────────────
+async function extractBankStatement(){
+  if(!pdfFile){ showPDFStatus('Please select a PDF file first.','error'); return; }
+  const password = document.getElementById('pdf-password').value||'';
+  showPDFStatus('Extracting monthly credits...','info');
+  document.getElementById('extract-spinner').style.display='block';
+  document.getElementById('extract-btn-text').textContent='Extracting...';
+
+  try{
+    const arrayBuffer = await pdfFile.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({data:arrayBuffer, password});
+    const pdf = await loadingTask.promise;
+
+    // Extract all page texts
+    const pages=[];
+    for(let i=1;i<=pdf.numPages;i++){
+      const page = await pdf.getPage(i);
+      const tc   = await page.getTextContent();
+      const text = tc.items.map(it=>it.str).join(' ');
+      pages.push(text);
+    }
+    const fullText = pages.join('\n');
+    const bank = detectBank(fullText);
+
+    let monthly = {};
+
+    // Try parsers in order
+    if(bank==='PalmPay'||fullText.toLowerCase().includes('palmpay')){
+      monthly = parsePalmPay(pages);
+    }
+    if(!Object.keys(monthly).length && (bank==='Kuda'||bank==='Moniepoint')){
+      monthly = parseKudaMoniepoint(pages);
+    }
+    if(!Object.keys(monthly).length && bank==='Opay'){
+      monthly = parseOpay(pages);
+    }
+    if(!Object.keys(monthly).length){
+      monthly = parseSummaryTable(fullText);
+    }
+    if(!Object.keys(monthly).length){
+      monthly = parseRowTransaction(pages);
+    }
+    if(!Object.keys(monthly).length){
+      monthly = parsePalmPay(pages);
+    }
+    if(!Object.keys(monthly).length){
+      monthly = parseKudaMoniepoint(pages);
+    }
+    if(!Object.keys(monthly).length){
+      monthly = parseOpay(pages);
+    }
+
+    const sorted = Object.entries(monthly)
+      .filter(([,v])=>v.credit>0)
+      .sort(([a],[b])=>a.localeCompare(b))
+      .slice(-6)
+      .map(([,v])=>v);
+
+    if(!sorted.length){
+      showPDFStatus('Could not extract monthly credits. Statement format may not be supported.','error');
+      return;
+    }
+
+    fillInflowFields(sorted);
+    showPDFStatus('✅ Extracted '+sorted.length+' months from '+bank+' statement','success');
+
+  } catch(err){
+    if(err.name==='PasswordException'){
+      showPDFStatus('Incorrect or missing PDF password.','error');
+    } else {
+      showPDFStatus('Error: '+err.message,'error');
+      console.error(err);
+    }
+  } finally {
+    document.getElementById('extract-spinner').style.display='none';
+    document.getElementById('extract-btn-text').textContent='⊙  Extract Monthly Credits';
+  }
+}
+
+function detectBank(text){
+  const t=text.toLowerCase();
+  if(t.includes('palmpay')) return 'PalmPay';
+  if(t.includes('kuda')) return 'Kuda';
+  if(t.includes('moniepoint')) return 'Moniepoint';
+  if(t.includes('opay')||t.includes('9payment')) return 'Opay';
+  if(t.includes('zenith')) return 'Zenith Bank';
+  if(t.includes('guaranty trust')||t.includes('gtbank')) return 'GTBank';
+  if(t.includes('access bank')) return 'Access Bank';
+  if(t.includes('united bank for africa')) return 'UBA';
+  if(t.includes('first bank')||t.includes('firstbank')) return 'First Bank';
+  if(t.includes('sterling')) return 'Sterling Bank';
+  if(t.includes('stanbic')) return 'Stanbic IBTC';
+  if(t.includes('fidelity')) return 'Fidelity Bank';
+  if(t.includes('wema')) return 'Wema Bank';
+  if(t.includes('union bank')) return 'Union Bank';
+  if(t.includes('fcmb')) return 'FCMB';
+  if(t.includes('ecobank')) return 'Ecobank';
+  return 'Unknown Bank';
+}
+
+function ymToLabel(ym){
+  const [yr,mo]=ym.split('-');
+  return MONTH_ABBR[parseInt(mo)]+' '+yr.slice(2);
+}
+function addCredit(monthly,ym,amt){
+  if(!ym||!amt||amt<=0) return;
+  if(!monthly[ym]) monthly[ym]={credit:0,count:0,label:ymToLabel(ym),year:parseInt(ym.split('-')[0]),month:MONTH_ABBR[parseInt(ym.split('-')[1])]};
+  monthly[ym].credit+=amt;
+  monthly[ym].count++;
+}
+
+// ── PalmPay: +amount pattern ──────────────────────────────────────────────────
+function parsePalmPay(pages){
+  const monthly={};
+  const datePat = /(\d{1,2})\/(\d{1,2})\/(20\d{2})/;
+  for(const text of pages){
+    for(const line of text.split(/\n|(?=\d{2}\/\d{2}\/20)/)){
+      const dm=datePat.exec(line);
+      if(!dm) continue;
+      const ym=`${dm[3]}-${String(parseInt(dm[1])).padStart(2,'0')}`;
+      const plus=/\+(\d[\d,]*\.?\d*)/.exec(line);
+      if(plus){
+        const amt=parseFloat(plus[1].replace(/,/g,''));
+        addCredit(monthly,ym,amt);
+      }
+    }
+  }
+  return monthly;
+}
+
+// ── Kuda / Moniepoint App: DD/MM/YY ₦amount inward/local ─────────────────────
+function parseKudaMoniepoint(pages){
+  const monthly={};
+  const seen=new Set();
+  const linePat=/^(\d{2})\/(\d{2})\/(\d{2,4})\s+₦([\d,]+\.?\d*)\s+(.*)/;
+  const CREDIT_FIRST=['inward','local'];
+  const CBN_SKIP=['stamp','levy','duty','electronic'];
+
+  for(const text of pages){
+    for(const line of text.split('\n')){
+      const m=linePat.exec(line.trim());
+      if(!m) continue;
+      const [,day,mon,yr,amtStr,rest]=m;
+      const key=line.trim().slice(0,80);
+      if(seen.has(key)) continue;
+      seen.add(key);
+      const fullYr=yr.length===4?yr:'20'+yr;
+      const ym=`${fullYr}-${String(parseInt(mon)).padStart(2,'0')}`;
+      const amt=parseFloat(amtStr.replace(/,/g,''));
+      const firstWord=(rest.split(' ')[0]||'').toLowerCase();
+      const rl=rest.toLowerCase();
+      if(rl.includes('cbn')&&CBN_SKIP.some(w=>rl.includes(w))) continue;
+      if(CREDIT_FIRST.includes(firstWord)&&amt>0) addCredit(monthly,ym,amt);
+    }
+  }
+  return monthly;
+}
+
+// ── Opay: dual-layout tables + Transfer from look-ahead ───────────────────────
+function parseOpay(pages){
+  const monthly={};
+  const datePat=/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})/i;
+
+  function getYM(text){
+    const m=datePat.exec((text||'').replace(/\n/g,' '));
+    if(!m) return null;
+    return `${m[3]}-${String(MONTH_MAP[m[2].toLowerCase().slice(0,3)]).padStart(2,'0')}`;
+  }
+  function cleanNum(s){
+    const v=String(s||'').replace(/,/g,'').trim();
+    if(['--','-','','N/A'].includes(v)) return null;
+    const n=parseFloat(v);
+    return isNaN(n)?null:n;
+  }
+
+  for(const text of pages){
+    const lines=text.split('\n');
+    let prevTransferFrom=false;
+    for(const line of lines){
+      const ll=line.toLowerCase().trim();
+      if(ll.includes('transfer from')&&!datePat.test(line)){
+        prevTransferFrom=true; continue;
+      }
+      if(ll.includes('transfer from')&&datePat.test(line)){
+        const ym=getYM(line);
+        const nums=[...line.matchAll(/[\d,]+\.\d{2}/g)].map(m=>cleanNum(m[0])).filter(n=>n&&n>0);
+        if(ym&&nums.length) addCredit(monthly,ym,nums[0]);
+        prevTransferFrom=false; continue;
+      }
+      if(prevTransferFrom){
+        const ym=getYM(line);
+        if(ym&&line.includes('--')){
+          const nums=[...line.matchAll(/[\d,]+\.\d{2}/g)].map(m=>cleanNum(m[0])).filter(n=>n&&n>0);
+          if(nums.length) addCredit(monthly,ym,nums[0]);
+        }
+        prevTransferFrom=false; continue;
+      }
+      prevTransferFrom=false;
+    }
+  }
+  return monthly;
+}
+
+// ── Summary Table (Zenith, GTB, Sterling, Access Bank summary, etc.) ──────────
+function parseSummaryTable(fullText){
+  const monthly={};
+  const tokens=fullText.replace(/\n/g,' ').replace(/\s+/g,' ').split(' ');
+  for(let i=0;i<tokens.length;i++){
+    if(!/^20\d{2}$/.test(tokens[i])) continue;
+    const monKey=(tokens[i+1]||'').toLowerCase().slice(0,3);
+    if(!MONTH_MAP[monKey]) continue;
+    const yr=tokens[i];
+    const mo=MONTH_MAP[monKey];
+    const ym=`${yr}-${String(mo).padStart(2,'0')}`;
+    if(monthly[ym]) continue;
+    for(let j=i+2;j<i+14&&j<tokens.length-1;j++){
+      const n1=parseFloat((tokens[j]||'').replace(/,/g,''));
+      const n2=parseFloat((tokens[j+1]||'').replace(/,/g,''));
+      if(!isNaN(n1)&&!isNaN(n2)&&n2>=0){
+        addCredit(monthly,ym,n2);
+        break;
+      }
+    }
+  }
+  return monthly;
+}
+
+// ── Row Transaction (Access Bank DD-MON-YY, GTB DD/MM/YYYY) ─────────────────
+function parseRowTransaction(pages){
+  const monthly={};
+  const pats=[
+    // DD-MON-YY: 09-SEP-25
+    {re:/(\d{1,2})-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-(\d{2})\b/i,
+     ym:(g)=>`20${g[3]}-${String(MONTH_MAP[g[2].toLowerCase().slice(0,3)]).padStart(2,'0')}`},
+    // DD/MM/YYYY
+    {re:/(\d{2})\/(\d{2})\/(20\d{2})\b/,
+     ym:(g)=>`${g[3]}-${String(parseInt(g[2])).padStart(2,'0')}`},
+    // YYYY-MM-DD
+    {re:/\b(20\d{2})-(0[1-9]|1[0-2])-\d{2}\b/,
+     ym:(g)=>`${g[1]}-${g[2]}`},
+  ];
+
+  for(const text of pages){
+    // Look for Credit column header then extract rows
+    const lines=text.split('\n');
+    let creditPos=-1;
+    let debitPos=-1;
+
+    // Try to find "Credit" column in header
+    for(const line of lines){
+      if(/credit/i.test(line)&&/debit/i.test(line)){
+        // Rough column position detection
+        const cl=line.toLowerCase();
+        creditPos=cl.indexOf('credit');
+        debitPos=cl.indexOf('debit');
+        break;
+      }
+    }
+
+    for(const line of lines){
+      let ym=null;
+      for(const p of pats){
+        const m=p.re.exec(line);
+        if(m){ ym=p.ym(m); break; }
+      }
+      if(!ym) continue;
+      // Find amounts in the line — credit is typically after debit
+      const amounts=[...line.matchAll(/[\d,]+\.\d{2}/g)]
+        .map(m=>parseFloat(m[0].replace(/,/g,'')))
+        .filter(n=>n>0&&n<1e10);
+      if(amounts.length<1) continue;
+      // Heuristic: if line has '-' before credit position, skip
+      if(line.includes(' - ')||line.match(/\s-\s/)){
+        // Has a dash — likely debit row in some formats
+        // Try to get the credit value if it's the second amount
+        if(amounts.length>=2) addCredit(monthly,ym,amounts[amounts.length-2]);
+      } else if(amounts.length>=1){
+        addCredit(monthly,ym,amounts[amounts.length>1?amounts.length-2:0]);
+      }
+    }
+  }
+  return monthly;
+}
+
+function fillInflowFields(data){
+  const previewRows=document.getElementById('pdf-preview-rows');
+  previewRows.innerHTML='';
+  data.forEach((v,idx)=>{
+    previewRows.innerHTML+=
+      `<div class="pdf-preview-row">
+        <span style="font-size:11px;color:var(--accent)">Month ${idx+1}</span>
+        <span style="font-size:12px">${v.label}</span>
+        <span style="font-size:12px;color:var(--green);text-align:right">₦${Math.round(v.credit).toLocaleString('en-NG')}</span>
+      </div>`;
+    const inflowEl=document.getElementById('inflow-'+(idx+1));
+    const lblEl=document.getElementById('lbl-'+(idx+1));
+    if(inflowEl){ inflowEl.value=Math.round(v.credit); inflowEl.style.borderColor='var(--green)'; }
+    if(lblEl) lblEl.textContent=v.label;
+  });
+  document.getElementById('pdf-preview').style.display='block';
+}
+</script>
+</body>
+</html>
