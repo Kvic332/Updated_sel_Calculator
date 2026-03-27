@@ -606,97 +606,57 @@ function parsePalmPay(pages){
   return monthly;
 }
 
-// ── Kuda / Moniepoint App: multi-line transaction parser ─────────────────────
-// Format per transaction (lines stacked vertically in PDF):
-//   Line 1: DD/MM/YY  (date only)
-//   Line 2: HH:MM:SS  (time)
-//   Line 3: ₦amount category description...
+// ── Kuda / Moniepoint App ────────────────────────────────────────────────────
+// PDF.js format (spaces, no newlines): "DD/MM/YY ₦amount CATEGORY description ..."
+// Pattern works for both PDF.js and line-based extraction
 function parseKudaMoniepoint(pages){
   const monthly={};
   const seen=new Set();
-  const CREDIT_KW=['inward','local','transfer from','received','credit'];
-  const DEBIT_KW=['outward','spend','bills','airtime','data','repayment','disbursement','withdrawal','debit','sent'];
+  const CREDIT_FIRST=['inward','local'];
   const CBN_SKIP=['stamp','levy','duty','electronic'];
 
   for(const text of pages){
-    const lines=text.split('\n').map(l=>l.trim()).filter(Boolean);
-
-    for(let i=0;i<lines.length;i++){
-      // Detect date line: DD/MM/YY or DD/MM/YYYY (date ONLY, no other content)
-      const dateMatch=lines[i].match(/^(\d{2})\/(\d{2})\/(\d{2,4})$/);
-      if(!dateMatch) continue;
-
-      const mon=dateMatch[2];
-      const yr=dateMatch[3].length===4?dateMatch[3]:'20'+dateMatch[3];
-      const ym=`${yr}-${String(parseInt(mon)).padStart(2,'0')}`;
-
-      // Dedup
-      const key=lines[i]+(lines[i+2]||'');
+    // Match: DD/MM/YY ₦amount firstWord (date and amount on same token in PDF.js)
+    const pat=/(\d{2})\/(\d{2})\/(\d{2,4})\s+₦([\d,]+\.\d{2})\s+(\S+)/g;
+    let m;
+    while((m=pat.exec(text))!==null){
+      const [,day,mon,yr,amtStr,firstWord]=m;
+      const key=`${day}/${mon}/${yr}_${amtStr}`;
       if(seen.has(key)) continue;
       seen.add(key);
-
-      // Look ahead up to 5 lines for ₦amount line
-      for(let j=i+1;j<i+6&&j<lines.length;j++){
-        const amtMatch=lines[j].match(/₦([\d,]+\.\d{2})/);
-        if(!amtMatch) continue;
-
-        const amt=parseFloat(amtMatch[1].replace(/,/g,''));
-        const lower=lines[j].toLowerCase();
-
-        // Skip CBN stamp duty fees
-        if(lower.includes('cbn')&&CBN_SKIP.some(w=>lower.includes(w))) break;
-
-        const isCredit=CREDIT_KW.some(kw=>lower.includes(kw));
-        const isDebit=DEBIT_KW.some(kw=>lower.includes(kw));
-
-        if(isCredit&&!isDebit&&amt>0) addCredit(monthly,ym,amt);
-        break;
-      }
+      const fullYr=yr.length===4?yr:'20'+yr;
+      const ym=`${fullYr}-${String(parseInt(mon)).padStart(2,'0')}`;
+      const amt=parseFloat(amtStr.replace(/,/g,''));
+      const fw=firstWord.toLowerCase();
+      // Get surrounding context for CBN check
+      const ctx=text.slice(Math.max(0,m.index),m.index+120).toLowerCase();
+      const isCBN=ctx.includes('cbn')&&CBN_SKIP.some(w=>ctx.includes(w));
+      if(!isCBN&&CREDIT_FIRST.includes(fw)&&amt>0) addCredit(monthly,ym,amt);
     }
   }
   return monthly;
 }
 
-// ── Opay: dual-layout tables + Transfer from look-ahead ───────────────────────
+// ── Opay: credit rows where Debit="--" ───────────────────────────────────────
+// PDF.js joins text with spaces. Opay credit rows have "--" where debit should be.
+// Pattern: DATE TIME DATE description -- credit_amt balance_amt Mobile
+// This reliably distinguishes credits (debit="--") from debits (credit="--")
 function parseOpay(pages){
   const monthly={};
-  const datePat=/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})/i;
-
-  function getYM(text){
-    const m=datePat.exec((text||'').replace(/\n/g,' '));
-    if(!m) return null;
-    return `${m[3]}-${String(MONTH_MAP[m[2].toLowerCase().slice(0,3)]).padStart(2,'0')}`;
-  }
-  function cleanNum(s){
-    const v=String(s||'').replace(/,/g,'').trim();
-    if(['--','-','','N/A'].includes(v)) return null;
-    const n=parseFloat(v);
-    return isNaN(n)?null:n;
-  }
+  const MONTH_LOCAL={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
 
   for(const text of pages){
-    const lines=text.split('\n');
-    let prevTransferFrom=false;
-    for(const line of lines){
-      const ll=line.toLowerCase().trim();
-      if(ll.includes('transfer from')&&!datePat.test(line)){
-        prevTransferFrom=true; continue;
-      }
-      if(ll.includes('transfer from')&&datePat.test(line)){
-        const ym=getYM(line);
-        const nums=[...line.matchAll(/[\d,]+\.\d{2}/g)].map(m=>cleanNum(m[0])).filter(n=>n&&n>0);
-        if(ym&&nums.length) addCredit(monthly,ym,nums[0]);
-        prevTransferFrom=false; continue;
-      }
-      if(prevTransferFrom){
-        const ym=getYM(line);
-        if(ym&&line.includes('--')){
-          const nums=[...line.matchAll(/[\d,]+\.\d{2}/g)].map(m=>cleanNum(m[0])).filter(n=>n&&n>0);
-          if(nums.length) addCredit(monthly,ym,nums[0]);
-        }
-        prevTransferFrom=false; continue;
-      }
-      prevTransferFrom=false;
+    // Pattern matches full Opay transaction: date time valuedate desc -- creditamt
+    // The key: description has no decimal numbers, then "--" then the credit amount
+    const re = /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})\s+\d{2}:\d{2}:\d{2}\s+\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+20\d{2}\s+((?:(?!\d+\.\d{2}).)*?)--\s+([\d,]+\.\d{2})/gi;
+    let m;
+    while((m=re.exec(text))!==null){
+      const [,day,mon,yr,,amt]=m;
+      const mo=MONTH_LOCAL[mon.toLowerCase().slice(0,3)];
+      if(!mo) continue;
+      const ym=`${yr}-${String(mo).padStart(2,'0')}`;
+      const v=parseFloat(amt.replace(/,/g,''));
+      if(v>0) addCredit(monthly,ym,v);
     }
   }
   return monthly;
@@ -726,62 +686,38 @@ function parseSummaryTable(fullText){
   return monthly;
 }
 
-// ── Row Transaction (Access Bank DD-MON-YY, GTB DD/MM/YYYY) ─────────────────
+// ── Row Transaction (Access Bank DD-MON-YY, GTB DD/MM/YYYY) ──────────────────
+// Handles PDF.js space-joined text: "DD-MON-YY DD-MON-YY description - credit balance"
 function parseRowTransaction(pages){
   const monthly={};
-  const pats=[
-    // DD-MON-YY: 09-SEP-25
-    {re:/(\d{1,2})-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-(\d{2})\b/i,
-     ym:(g)=>`20${g[3]}-${String(MONTH_MAP[g[2].toLowerCase().slice(0,3)]).padStart(2,'0')}`},
-    // DD/MM/YYYY
-    {re:/(\d{2})\/(\d{2})\/(20\d{2})\b/,
-     ym:(g)=>`${g[3]}-${String(parseInt(g[2])).padStart(2,'0')}`},
-    // YYYY-MM-DD
-    {re:/\b(20\d{2})-(0[1-9]|1[0-2])-\d{2}\b/,
-     ym:(g)=>`${g[1]}-${g[2]}`},
-  ];
+  const MONTH_LOCAL={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
 
   for(const text of pages){
-    // Look for Credit column header then extract rows
-    const lines=text.split('\n');
-    let creditPos=-1;
-    let debitPos=-1;
-
-    // Try to find "Credit" column in header
-    for(const line of lines){
-      if(/credit/i.test(line)&&/debit/i.test(line)){
-        // Rough column position detection
-        const cl=line.toLowerCase();
-        creditPos=cl.indexOf('credit');
-        debitPos=cl.indexOf('debit');
-        break;
-      }
+    // Access Bank: DD-MON-YY DD-MON-YY description - credit_amt balance
+    // Credit rows have single "-" where debit should be
+    const accessPat=/(\d{2})-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-(\d{2})\s+\d{2}-(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-\d{2}\s+((?:(?!\d[\d,]*\.\d{2}).)*?)-\s+([\d,]+\.\d{2})/gi;
+    let m;
+    while((m=accessPat.exec(text))!==null){
+      const [,day,mon,yr,,amt]=m;
+      const mo=MONTH_LOCAL[mon.toLowerCase().slice(0,3)];
+      if(!mo) continue;
+      const ym=`20${yr}-${String(mo).padStart(2,'0')}`;
+      const v=parseFloat(amt.replace(/,/g,''));
+      if(v>0) addCredit(monthly,ym,v);
     }
 
-    for(const line of lines){
-      let ym=null;
-      for(const p of pats){
-        const m=p.re.exec(line);
-        if(m){ ym=p.ym(m); break; }
-      }
-      if(!ym) continue;
-      // Find amounts in the line — credit is typically after debit
-      const amounts=[...line.matchAll(/[\d,]+\.\d{2}/g)]
-        .map(m=>parseFloat(m[0].replace(/,/g,'')))
-        .filter(n=>n>0&&n<1e10);
-      if(amounts.length<1) continue;
-      // Heuristic: if line has '-' before credit position, skip
-      if(line.includes(' - ')||line.match(/\s-\s/)){
-        // Has a dash — likely debit row in some formats
-        // Try to get the credit value if it's the second amount
-        if(amounts.length>=2) addCredit(monthly,ym,amounts[amounts.length-2]);
-      } else if(amounts.length>=1){
-        addCredit(monthly,ym,amounts[amounts.length>1?amounts.length-2:0]);
-      }
+    // GTB/First Bank: DD/MM/YYYY description (credit col)
+    const gtbPat=/(\d{2})\/(\d{2})\/(20\d{2})\s+(?:\d{2}\/\d{2}\/20\d{2}\s+)?((?:(?!\d[\d,]*\.\d{2}).)*?)(?:\d[\d,]*\.\d{2}\s+)?-\s+([\d,]+\.\d{2})/g;
+    while((m=gtbPat.exec(text))!==null){
+      const [,day,mon,yr,,amt]=m;
+      const ym=`${yr}-${String(parseInt(mon)).padStart(2,'0')}`;
+      const v=parseFloat(amt.replace(/,/g,''));
+      if(v>0) addCredit(monthly,ym,v);
     }
   }
   return monthly;
 }
+
 
 function fillInflowFields(data){
   const previewRows=document.getElementById('pdf-preview-rows');
