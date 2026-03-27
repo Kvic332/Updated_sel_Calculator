@@ -528,12 +528,17 @@ async function extractBankStatement(){
     // ── Dispatcher: pick the best parser for detected bank ────────────────
     const ft = fullText.toLowerCase();
 
-    // Kuda & Moniepoint — column-position layout parser (NEW)
+    // Moniepoint — raw-text ordinal-position parser (Settlement Credit column)
     if(!Object.keys(monthly).length &&
-       (bank.includes('Kuda')||bank==='Moniepoint'||ft.includes('kuda')||ft.includes('moniepoint'))){
+       (bank==='Moniepoint'||ft.includes('moniepoint'))){
+      monthly = parseMoniepoint(pages.map(p=>p.rawText));
+    }
+    // Kuda — column-position layout parser
+    if(!Object.keys(monthly).length &&
+       (bank.includes('Kuda')||ft.includes('kuda'))){
       monthly = parseKudaLayout(pages);
     }
-    // PalmPay — column-position layout parser (NEW)
+    // PalmPay — same column layout as Kuda
     if(!Object.keys(monthly).length &&
        (bank==='PalmPay'||ft.includes('palmpay'))){
       monthly = parsePalmPayLayout(pages);
@@ -586,6 +591,10 @@ async function extractBankStatement(){
 
 function detectBank(text){
   const t=text.toLowerCase();
+  // Check Moniepoint BEFORE Kuda — Kuda statements reference Moniepoint in narrations
+  if(t.includes('moniepoint mfb')||t.includes('moniepoint microfinance')||
+     (t.includes('moniepoint')&&t.includes('account statement')&&t.includes('settlement')))
+    return 'Moniepoint';
   if(t.includes('palmpay')) return 'PalmPay';
   if(t.includes('kuda mf bank')||t.includes('kudabank')||t.includes('kuda bank')||t.includes('kuda')) return 'Kuda MF Bank';
   if(t.includes('moniepoint')) return 'Moniepoint';
@@ -618,6 +627,71 @@ function addCredit(monthly,ym,amt){
   if(!monthly[ym]) monthly[ym]={credit:0,count:0,label:ymToLabel(ym),year:parseInt(ym.split('-')[0]),month:MONTH_ABBR[parseInt(ym.split('-')[1])]};
   monthly[ym].credit+=amt;
   monthly[ym].count++;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Moniepoint — raw-text ordinal-position parser
+// ════════════════════════════════════════════════════════════════════════════
+// Moniepoint PDFs use a wide fixed-width layout with these columns per row:
+//   Transaction Amount | Settlement Debit | Settlement Credit | Bal Before | Bal After | Charge
+//
+// Key rules proven from real statements:
+//   CREDIT row: 5–6 numbers, nums[1] == 0.00, nums[2] == Settlement Credit > 0
+//   DEBIT row:  5–6 numbers, nums[2] == 0.00 (Settlement Credit is zero)
+//   FEE row:    4 numbers only (no Transaction Amount column) — always skipped
+//
+// Date is split across lines: "2025-" on one line, "03-   accountName" on next.
+// We reconstruct YYYY-MM by tracking year fragments then scanning ahead for month.
+// ════════════════════════════════════════════════════════════════════════════
+function parseMoniepoint(rawPages){
+  const monthly = {};
+  const fullText = rawPages.join('\n');
+  const lines = fullText.split('\n');
+
+  let currentYM = null;
+
+  for(let i = 0; i < lines.length; i++){
+    const stripped = lines[i].trim();
+
+    // Year-only fragment: "2025-" or "2026-"
+    const yearOnly = /^(20\d{2})-$/.exec(stripped);
+    if(yearOnly){
+      const year = yearOnly[1];
+      // Scan ahead for month fragment "MM-..."
+      for(let j = i+1; j < Math.min(i+5, lines.length); j++){
+        const mm = /^(\d{2})-/.exec(lines[j].trim());
+        if(mm){
+          currentYM = `${year}-${mm[1]}`;
+          break;
+        }
+      }
+      continue;
+    }
+
+    // Combined year-month on one fragment: "2025-03-..."
+    const ymCombined = /^(20\d{2})-(0\d|1[0-2])-/.exec(stripped);
+    if(ymCombined){
+      currentYM = `${ymCombined[1]}-${ymCombined[2]}`;
+      continue;
+    }
+
+    if(!currentYM || lines[i].length < 160) continue;
+
+    // Extract all decimal numbers from this line
+    const nums = [];
+    const numRe = /[\d,]+\.\d{2}/g;
+    let m;
+    while((m = numRe.exec(lines[i])) !== null){
+      nums.push(parseFloat(m[0].replace(/,/g, '')));
+    }
+
+    // CREDIT ROW: must have 5+ numbers, nums[1] == 0.00, nums[2] > 0
+    // This means: Settlement Debit is zero → Settlement Credit is non-zero
+    if(nums.length >= 5 && nums[1] === 0.0 && nums[2] > 0){
+      addCredit(monthly, currentYM, nums[2]);
+    }
+  }
+  return monthly;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
