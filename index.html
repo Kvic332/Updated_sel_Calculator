@@ -632,15 +632,22 @@ function addCredit(monthly,ym,amt){
 // ════════════════════════════════════════════════════════════════════════════
 // Moniepoint — raw-text ordinal-position parser
 // ════════════════════════════════════════════════════════════════════════════
-// Moniepoint PDFs use a wide fixed-width layout with these columns per row:
-//   Transaction Amount | Settlement Debit | Settlement Credit | Bal Before | Bal After | Charge
+// Moniepoint PDFs have TWO credit row formats depending on statement version:
 //
-// Key rules proven from real statements:
-//   CREDIT row: 5–6 numbers, nums[1] == 0.00, nums[2] == Settlement Credit > 0
-//   DEBIT row:  5–6 numbers, nums[2] == 0.00 (Settlement Credit is zero)
-//   FEE row:    4 numbers only (no Transaction Amount column) — always skipped
+//   Format B (6 nums) — TxAmt column present:
+//     [TxAmt, 0.00, SettCredit, BalBefore, BalAfter, Charge]
+//     Rule: len >= 5, nums[1] == 0, nums[2] > 0
 //
-// Date is split across lines: "2025-" on one line, "03-   accountName" on next.
+//   Format A (4 nums) — TxAmt column absent on credit rows:
+//     [0.00, SettCredit, BalBefore, BalAfter]
+//     Rule: len == 4, nums[0] == 0, nums[1] > 0
+//
+//   DEBIT row (6 nums): [TxAmt, SettDebit, 0.00, BalBefore, BalAfter, Charge]
+//     nums[2] == 0 → skip
+//   FEE row (4 nums): [SettDebit, 0.00, BalBefore, BalAfter]
+//     nums[0] > 0, nums[1] == 0 → doesn't match Format A → skip
+//
+// Date is split across lines: "2025-" on one line, "MM-   accountName" on next.
 // We reconstruct YYYY-MM by tracking year fragments then scanning ahead for month.
 // ════════════════════════════════════════════════════════════════════════════
 function parseMoniepoint(rawPages){
@@ -657,27 +664,19 @@ function parseMoniepoint(rawPages){
     const yearOnly = /^(20\d{2})-$/.exec(stripped);
     if(yearOnly){
       const year = yearOnly[1];
-      // Scan ahead for month fragment "MM-..."
       for(let j = i+1; j < Math.min(i+5, lines.length); j++){
         const mm = /^(\d{2})-/.exec(lines[j].trim());
-        if(mm){
-          currentYM = `${year}-${mm[1]}`;
-          break;
-        }
+        if(mm){ currentYM = `${year}-${mm[1]}`; break; }
       }
       continue;
     }
 
     // Combined year-month on one fragment: "2025-03-..."
     const ymCombined = /^(20\d{2})-(0\d|1[0-2])-/.exec(stripped);
-    if(ymCombined){
-      currentYM = `${ymCombined[1]}-${ymCombined[2]}`;
-      continue;
-    }
+    if(ymCombined){ currentYM = `${ymCombined[1]}-${ymCombined[2]}`; continue; }
 
     if(!currentYM || lines[i].length < 160) continue;
 
-    // Extract all decimal numbers from this line
     const nums = [];
     const numRe = /[\d,]+\.\d{2}/g;
     let m;
@@ -685,11 +684,17 @@ function parseMoniepoint(rawPages){
       nums.push(parseFloat(m[0].replace(/,/g, '')));
     }
 
-    // CREDIT ROW: must have 5+ numbers, nums[1] == 0.00, nums[2] > 0
-    // This means: Settlement Debit is zero → Settlement Credit is non-zero
+    let credit = null;
+    // Format B: TxAmt present → SettDebit=0 at pos 1, SettCredit at pos 2
     if(nums.length >= 5 && nums[1] === 0.0 && nums[2] > 0){
-      addCredit(monthly, currentYM, nums[2]);
+      credit = nums[2];
     }
+    // Format A: TxAmt absent → SettDebit=0 at pos 0, SettCredit at pos 1
+    // (FEE rows: nums[0]>0 and nums[1]==0 — opposite → correctly skipped)
+    else if(nums.length === 4 && nums[0] === 0.0 && nums[1] > 0){
+      credit = nums[1];
+    }
+    if(credit) addCredit(monthly, currentYM, credit);
   }
   return monthly;
 }
