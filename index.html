@@ -668,11 +668,19 @@ function parseOpayLayout(pages, fullText){
   // Name parts for generic self-transfer detection (handles any customer name)
   const nameParts=accountName.split(/\s+/).filter(p=>p.length>3).map(p=>p.toLowerCase());
 
-  // Raw text stops at Savings Account section
-  const rawFull=pages.map(p=>p.raw).join('\n');
-  const savIdx=rawFull.indexOf('Savings Account');
-  const walletText=savIdx>0?rawFull.slice(0,savIdx):rawFull;
-  const lines=walletText.split('\n');
+  // Use the reconstructed visual rows instead of raw text. Raw concatenation
+  // can merge unrelated fragments and make debit rows look like credits.
+  const lines=[];
+  let stop=false;
+  for(const page of pages){
+    for(const row of page.lines){
+      const text=(row.text||'').replace(/\s+/g,' ').trim();
+      if(!text)continue;
+      if(text.includes('Savings Account')){stop=true;break;}
+      lines.push(text);
+    }
+    if(stop)break;
+  }
 
   // ── PASS 1: Mark line ranges near key pattern markers ──────────────────
   const selfXferNearby=new Set();  // own-name inflow from any bank
@@ -686,28 +694,27 @@ function parseOpayLayout(pages, fullText){
     // Requires ≥2 name parts to match (prevents false positives)
     if(nameParts.length>=2&&nameParts.filter(p=>ll.includes(p)).length>=2&&
        (ll.includes('transfer from')||ll.includes('nip transfer'))){
-      for(let j=i;j<Math.min(lines.length,i+8);j++)selfXferNearby.add(j);
+      for(let j=i;j<Math.min(lines.length,i+2);j++)selfXferNearby.add(j);
     }
 
     // Loan narration through own bank ("Loan payment", "Key lock" = security deposit routed through self)
     if((ll.includes('loan payment')||ll.includes('key lock')||ll.includes('cardkey lock'))&&
        nameParts.filter(p=>ll.includes(p)).length>=1){
-      for(let j=i;j<Math.min(lines.length,i+8);j++)loanNearby.add(j);
+      for(let j=i;j<Math.min(lines.length,i+2);j++)loanNearby.add(j);
     }
 
     // OKash/EaseMoni inbound disbursement
     if(/transfer from okash\(opay|transfer from easemoni\(opay/.test(ll)){
-      for(let j=i;j<Math.min(lines.length,i+5);j++)okashNearby.add(j);
+      for(let j=i;j<Math.min(lines.length,i+2);j++)okashNearby.add(j);
     }
 
     // Renmoney disbursement via MoniePay "Sent from Renmoney" narration
     if(ll.includes('sent from renmoney')){
-      for(let j=Math.max(0,i-2);j<Math.min(lines.length,i+5);j++)okashNearby.add(j);
+      for(let j=Math.max(0,i-1);j<Math.min(lines.length,i+2);j++)okashNearby.add(j);
     }
   }
 
   // ── PASS 2: Find credit lines, classify into 5 buckets ────────────────
-  const CREDIT_RE=/\s--\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/;
   const DATE_RE=/(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})/i;
   let currentYM=null;
 
@@ -716,10 +723,8 @@ function parseOpayLayout(pages, fullText){
     const dm=DATE_RE.exec(line);
     if(dm){const mo=MONTH_MAP[dm[2].toLowerCase()];if(mo)currentYM=dm[3]+'-'+String(mo).padStart(2,'0');}
 
-    const cm=CREDIT_RE.exec(line);
-    if(!cm||!currentYM)continue;
-    const amt=parseFloat(cm[1].replace(/,/g,''));
-    if(amt<=0)continue;
+    const amt=extractOpayCreditAmount(line);
+    if(!amt||!currentYM)continue;
 
     const ll=line.toLowerCase();
     let cat;
@@ -751,6 +756,21 @@ function parseOpayLayout(pages, fullText){
   }
 
   return monthly;
+}
+
+function extractOpayCreditAmount(line){
+  if(!line||!line.includes('--'))return null;
+
+  // OPay credit rows render as "-- creditAmount balance".
+  // Debit rows render as "debitAmount -- balance" and should be ignored.
+  const match=line.match(/(?:^|\s)--\s*([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(?:\s|$)/);
+  if(!match)return null;
+
+  const prefix=line.slice(0,match.index).trim();
+  if(/[\d,]+\.\d{2}\s*$/.test(prefix))return null;
+
+  const amount=parseFloat(match[1].replace(/,/g,''));
+  return amount>0?amount:null;
 }
 
 function _addToMonthly(monthly,ym,amount,cat){
