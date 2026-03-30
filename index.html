@@ -453,42 +453,38 @@ async function extractBankStatement(){
 // Categories: internalMove | selfTransfer | loanDisbursement | realCredit
 // Applied across ALL bank parsers uniformly.
 // ════════════════════════════════════════════════════════════════════════════
-function classifyCredit(desc, amount, accountHolderName){
-  const d = desc.toLowerCase();
+// classifyCredit(currentLine, fullContext, accountHolderName)
+// currentLine  = the specific line containing the credit amount (used for internal detection)
+// fullContext  = 8-line lookback window (used for multi-line self-transfer detection)
+function classifyCredit(currentLine, fullContext, accountHolderName){
+  const cl = (currentLine||'').toLowerCase();
+  const ctx = (fullContext||'').toLowerCase();
   const name = (accountHolderName||'').toLowerCase();
-  
-  // 1. Internal wallet moves (OPay OWealth, PalmPay savings, etc.)
-  if(d.includes('owealth withdrawal') || d.includes('owealth deposit') ||
-     d.includes('auto-save') || d.includes('owealth interest') ||
-     d.includes('wallet transfer') || d.includes('savings withdrawal') ||
-     d.includes('own transfer') || d.includes('owealth balance'))
+
+  // 1. Internal wallet moves — check CURRENT LINE only (avoids contamination from adjacent txns)
+  //    OWealth description always appears on the same line as its credit amount.
+  if(cl.includes('owealth withdrawal') || cl.includes('owealth deposit') ||
+     cl.includes('owealth interest') || cl.includes('auto-save to owealth') ||
+     cl.includes('savings withdrawal') || cl.includes('owealth balance'))
     return 'internalMove';
-  
-  // 2. Loan disbursements
-  if(d.includes('okash') || d.includes('easemoni') || d.includes('fairmoney') ||
-     d.includes('renmoney') || d.includes('palmcredit') || d.includes('branch ') ||
-     d.includes('carbon ') || d.includes('migo ') || d.includes('lidya ') ||
-     d.includes('zedvance') || d.includes('creditwave') || d.includes('quickcheck') ||
-     d.includes('loan disburs') || d.includes('credit disburs') || d.includes('disbursement'))
-    return 'loanDisbursement';
-  
-  // 3. Self-transfers — same account holder name in narration
-  if(name && name.length > 4) {
-    // Split name into parts and check if 2+ parts appear in description
+
+  // 2. Loan disbursements — check full context (description may wrap across lines)
+  const loanKw=['okash','easemoni','fairmoney','renmoney','palmcredit','branch loan',
+                'carbon ','migo ','lidya ','zedvance','creditwave','quickcheck',
+                'loan disburs','credit disburs','disbursement'];
+  if(loanKw.some(k=>ctx.includes(k))) return 'loanDisbursement';
+
+  // 3. Self-transfers — check full lookback context (name often 1-2 lines before credit line)
+  if(name && name.length > 4){
     const nameParts = name.split(/\s+/).filter(p=>p.length>3);
-    const matchCount = nameParts.filter(p=>d.includes(p)).length;
-    if(matchCount >= 2) return 'selfTransfer';
+    if(nameParts.filter(p=>ctx.includes(p)).length >= 2) return 'selfTransfer';
   }
-  // Generic self-transfer patterns
-  if((d.includes('transfer from') && d.includes('olalekan')) ||
-     (d.includes('transfer from') && d.includes('raheem ibrahim')) ||
-     (d.includes('nip transfer') && (d.includes(' own ') || d.includes('self'))))
-    return 'selfTransfer';
-    
+
   return 'realCredit';
 }
 
-function addCreditClassified(monthly, ym, amount, desc, accountHolderName){
+// addCreditClassified — currentLine is the line with --, contextWindow is the lookback
+function addCreditClassified(monthly, ym, amount, contextWindow, accountHolderName, currentLine){
   if(!ym||!amount||amount<=0)return;
   if(!monthly[ym])monthly[ym]={
     gross:0,count:0,
@@ -497,7 +493,7 @@ function addCreditClassified(monthly, ym, amount, desc, accountHolderName){
   };
   monthly[ym].gross+=amount;
   monthly[ym].count++;
-  const cat=classifyCredit(desc,amount,accountHolderName);
+  const cat=classifyCredit(currentLine||contextWindow, contextWindow, accountHolderName);
   monthly[ym][cat]+=amount;
 }
 
@@ -595,10 +591,12 @@ async function extractPDF(file){
     const ft=fullText.toLowerCase();
     let monthly={};
 
+    // Dispatcher — OPay MUST run before PalmPay (OPay narrations mention PalmPay as recipients)
     if(bank==='Moniepoint'||ft.includes('moniepoint')) monthly=parseMoniepoint(pages,fullText);
     if(!ok(monthly)&&(bank.includes('Kuda')||ft.includes('kuda'))) monthly=parseKudaLayout(pages);
+    // OPay before PalmPay: OPay uniquely identified by OWealth/Wallet Account
+    if(!ok(monthly)&&(bank==='OPay'||ft.includes('owealth')||ft.includes('9payment'))) monthly=parseOpay(pages,fullText);
     if(!ok(monthly)&&(bank==='PalmPay'||ft.includes('palmpay'))) monthly=parsePalmPay(pages,fullText);
-    if(!ok(monthly)&&(bank==='OPay'||ft.includes('opay')||ft.includes('9payment'))) monthly=parseOpay(pages,fullText);
     if(!ok(monthly)&&(bank==='Access Bank'||bank==='GTBank')) monthly=parseRowTransaction(pages.map(p=>p.raw));
     if(!ok(monthly)) monthly=parseMBSSummaryTable(fullText);
     if(!ok(monthly)) monthly=parseSummaryTable(fullText);
@@ -629,43 +627,54 @@ function buildSortedMonths(monthly){
 // ════════════════════════════════════════════════════════════════════════════
 function parseOpay(pages, fullText){
   const monthly={};
+
   // Extract account holder name from header
-  const nameM=fullText.match(/Account Name[^\n]*\n([A-Z ]+)/);
-  const accountName=nameM?nameM[1].trim():'';
+  const nameM = fullText.match(/Account Name\s+Account Number[^\n]*\n([A-Z ]+)/) ||
+                fullText.match(/^([A-Z]{3,}(?:\s+[A-Z]{2,})+)/m);
+  const accountName = nameM ? (nameM[1]||nameM[0]).trim() : '';
 
-  // Only parse Wallet Account section (stop at Savings Account)
-  let text=fullText;
-  const savIdx=fullText.search(/Savings Account Period|Savings Account\s*\n.*Period/i);
-  if(savIdx>0)text=fullText.slice(0,savIdx);
+  // CRITICAL: Only parse Wallet Account section
+  let text = fullText;
+  const savIdx = fullText.search(/Savings Account Period/i);
+  if(savIdx > 0) text = fullText.slice(0, savIdx);
 
-  const lines=text.split('\n');
-  let currentYM=null;
-  let pendingDesc='';
+  const lines = text.split('\n');
+  let currentYM = null;
+  // Keep a rolling 8-line lookback window — NOT reset on new date lines.
+  // This lets us detect multi-line descriptions where the name is 2 lines
+  // above the credit amount line (which itself starts with a date).
+  // e.g.: Line N:   "Transfer from RAHEEM IBRAHIM OLALEKAN | Guaranty"
+  //       Line N+2: "02 Jan 2026 ... Trust Bank | ... -- 29,000.00 ..."
+  const lookback = [];
 
-  for(let i=0;i<lines.length;i++){
-    const line=lines[i];
-    // Detect date line: DD Mon YYYY HH:MM:SS DD Mon YYYY ...
-    const dm=/^(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})/.exec(line.trim());
+  for(let i = 0; i < lines.length; i++){
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Update current month from date lines
+    const dm = /^(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})/.exec(trimmed);
     if(dm){
-      const mo=MONTH_MAP[dm[2].toLowerCase()];
-      currentYM=`${dm[3]}-${String(mo).padStart(2,'0')}`;
-      pendingDesc=line;
-    } else if(currentYM){
-      pendingDesc+=' '+line;
+      const mo = MONTH_MAP[dm[2].toLowerCase()];
+      currentYM = dm[3] + '-' + String(mo).padStart(2,'0');
     }
 
-    if(!currentYM)continue;
+    // Always maintain lookback window regardless of whether it is a date line
+    lookback.push(line);
+    if(lookback.length > 8) lookback.shift();
 
-    // Look for -- credit pattern in accumulated description
-    // Line with -- AMOUNT format = credit entry
-    const creditMatch=/--\s+([\d,]+\.\d{2})\s/.exec(line)||/--\s+([\d,]+\.\d{2})$/.exec(line);
-    if(creditMatch){
-      const amt=parseFloat(creditMatch[1].replace(/,/g,''));
-      if(amt>0){
-        addCreditClassified(monthly,currentYM,amt,pendingDesc,accountName);
-        pendingDesc='';
-      }
-    }
+    if(!currentYM) continue;
+
+    // CREDIT line: pattern is "  --  AMOUNT  BALANCE" (-- precedes the credit amount)
+    // Debit lines have "DEBITAMT  --  BALANCE" (-- follows the debit amount)
+    const cm = /\s--\s+(\d[\d,]*\.\d{2})\s+[\d,]+\.\d{2}/.exec(line);
+    if(!cm) continue;
+
+    const amt = parseFloat(cm[1].replace(/,/g,''));
+    if(amt <= 0) continue;
+
+    // Use full lookback window for classification — captures multi-line descriptions
+    const fullContext = lookback.join(' ');
+    addCreditClassified(monthly, currentYM, amt, fullContext, accountName, line);
   }
   return monthly;
 }
@@ -738,6 +747,10 @@ function detectBank(text){
   const t=text.toLowerCase();
   if(t.includes('moniepoint mfb')||t.includes('moniepoint microfinance')||
      (t.includes('moniepoint')&&t.includes('account statement')&&t.includes('settlement')))return 'Moniepoint';
+  // OPay MUST be checked before PalmPay — OPay narrations mention PalmPay as recipients
+  // OPay is uniquely identified by OWealth + Wallet Account combo, or opay digital services
+  if(t.includes('owealth')||(t.includes('opay digital')&&t.includes('wallet account'))||
+     (t.includes('9payment service')))return 'OPay';
   if(t.includes('palmpay'))return 'PalmPay';
   if(t.includes('kuda mf bank')||t.includes('kudabank')||t.includes('kuda bank')||t.includes('kuda'))return 'Kuda MF Bank';
   if(t.includes('moniepoint'))return 'Moniepoint';
