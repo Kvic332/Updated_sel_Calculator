@@ -77,16 +77,27 @@ select option{background:var(--surface2)}
 .tag-warn{background:rgba(255,149,0,.15);color:var(--orange);border:1px solid rgba(255,149,0,.3)}
 .tag-info{background:rgba(0,212,255,.1);color:var(--accent);border:1px solid rgba(0,212,255,.2)}
 
-/* Preview table with breakdown columns */
+/* Preview table with 5-column breakdown */
 .preview-table{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px}
-.preview-table th{font-size:9px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;padding:5px 8px;text-align:right;border-bottom:1px solid var(--border)}
+.preview-table th{font-size:9px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;padding:6px 10px;text-align:right;border-bottom:1px solid var(--border);white-space:nowrap}
 .preview-table th:first-child{text-align:left}
-.preview-table td{padding:5px 8px;border-bottom:1px solid rgba(30,58,95,.3);text-align:right}
-.preview-table td:first-child{text-align:left;color:var(--accent)}
+.preview-table td{padding:6px 10px;border-bottom:1px solid rgba(30,58,95,.3);text-align:right;font-size:11px}
+.preview-table td:first-child{text-align:left;color:var(--accent);font-weight:700}
 .preview-table tr:last-child td{border-bottom:none}
+.preview-table tfoot td{border-top:1px solid var(--border);font-weight:700;padding-top:10px}
 .col-gross{color:var(--green)}
-.col-deduct{color:var(--orange)}
+.col-nousable{color:#e040fb}
+.col-internal{color:var(--orange)}
+.col-obligation{color:var(--gold)}
 .col-net{color:var(--accent);font-weight:700}
+/* Legend pills */
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.legend-pill{font-size:9px;letter-spacing:1px;padding:3px 8px;border-radius:20px;text-transform:uppercase}
+.pill-gross{background:rgba(0,230,118,.1);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+.pill-nousable{background:rgba(224,64,251,.1);color:#e040fb;border:1px solid rgba(224,64,251,.2)}
+.pill-internal{background:rgba(255,149,0,.1);color:var(--orange);border:1px solid rgba(255,149,0,.2)}
+.pill-obligation{background:rgba(255,215,0,.1);color:var(--gold);border:1px solid rgba(255,215,0,.2)}
+.pill-net{background:rgba(0,212,255,.1);color:var(--accent);border:1px solid rgba(0,212,255,.2)}
 </style>
 </head>
 <body>
@@ -461,18 +472,26 @@ function classifyCredit(currentLine,fullContext,accountHolderName){
   const cl=(currentLine||'').toLowerCase();
   const ctx=(fullContext||'').toLowerCase();
   const name=(accountHolderName||'').toLowerCase();
+  // Internal wallet moves (OWealth, savings round-trip)
   if(cl.includes('owealth withdrawal')||cl.includes('owealth deposit')||
      cl.includes('owealth interest')||cl.includes('auto-save to owealth')||
      cl.includes('savings withdrawal')||cl.includes('owealth balance'))
     return 'internalMove';
+  // Loan disbursements
   const loanKw=['okash','easemoni','fairmoney','renmoney','palmcredit','branch loan',
                 'carbon ','migo ','lidya ','zedvance','creditwave','quickcheck',
                 'loan disburs','credit disburs','disbursement'];
   if(loanKw.some(k=>ctx.includes(k)))return 'loanDisbursement';
+  // Self-transfers (account holder's own other bank → this account)
   if(name&&name.length>4){
     const nameParts=name.split(/\s+/).filter(p=>p.length>3);
     if(nameParts.filter(p=>ctx.includes(p)).length>=2)return 'selfTransfer';
   }
+  // Gambling/betting winbacks — unreliable income, flag separately
+  if(cl.includes('sportybet')||cl.includes('sporty|')||cl.includes('betnaija')||
+     cl.includes('bet9ja')||cl.includes('1xbet')||cl.includes('betking')||
+     (cl.includes('opay payment gateway')&&ctx.includes('sporty')))
+    return 'recycleFunds';
   return 'realCredit';
 }
 
@@ -480,13 +499,13 @@ function addCreditClassified(monthly,ym,amount,contextWindow,accountHolderName,c
   if(!ym||!amount||amount<=0)return;
   if(!monthly[ym])monthly[ym]={
     gross:0,count:0,
-    internalMove:0,selfTransfer:0,loanDisbursement:0,realCredit:0,
+    internalMove:0,selfTransfer:0,loanDisbursement:0,recycleFunds:0,realCredit:0,
     label:ymToLabel(ym)
   };
   monthly[ym].gross+=amount;
   monthly[ym].count++;
   const cat=classifyCredit(currentLine||contextWindow,contextWindow,accountHolderName);
-  monthly[ym][cat]+=amount;
+  monthly[ym][cat]=(monthly[ym][cat]||0)+amount;
 }
 
 function ymToLabel(ym){const[yr,mo]=ym.split('-');return MONTH_ABBR[parseInt(mo)]+' '+yr.slice(2);}
@@ -563,6 +582,32 @@ async function extractPDF(file){
       }
       const sortedLines=[...lineMap.entries()].sort((a,b)=>b[0]-a[0])
         .map(([,items])=>({items:items.sort((a,b)=>a.x-b.x),text:items.sort((a,b)=>a.x-b.x).map(i=>i.str).join(' ')}));
+      // Also build a layout-preserving raw text (for OPay parser)
+      // Group items by Y position with wide tolerance
+      const yBuckets=new Map();
+      for(const item of tc.items){
+        if(!item.str.trim())continue;
+        const y=Math.round(item.transform[5]);
+        // bucket by rounded y
+        const bucket=Math.round(y/3)*3;
+        if(!yBuckets.has(bucket))yBuckets.set(bucket,[]);
+        yBuckets.get(bucket).push({str:item.str,x:item.transform[4]});
+      }
+      const layoutLines=[...yBuckets.entries()]
+        .sort((a,b)=>b[0]-a[0])
+        .map(([y,items])=>{
+          const sorted=items.sort((a,b)=>a.x-b.x);
+          // Build line with spacing hints based on x positions
+          let line='';
+          for(let k=0;k<sorted.length;k++){
+            if(k>0){
+              const gap=sorted[k].x-(sorted[k-1].x+(sorted[k-1].str.length*5));
+              if(gap>15)line+=' ';
+            }
+            line+=sorted[k].str;
+          }
+          return {y,text:line,rawX:sorted[0]?sorted[0].x:0};
+        });
       let raw='';
       for(let k=0;k<tc.items.length;k++){
         const s=tc.items[k].str;if(!s)continue;
@@ -571,7 +616,7 @@ async function extractPDF(file){
         const noSp=p.endsWith('\u20a6')||s.startsWith('\u20a6')||(p.match(/\d$/)&&s.match(/^[.,\d]/))||(p.match(/[.,]$/)&&s.match(/^\d/));
         raw+=(noSp?'':' ')+s;
       }
-      pages.push({raw,lines:sortedLines,width:vp.width});
+      pages.push({raw,lines:sortedLines,layoutLines,width:vp.width});
     }
     const fullText=pages.map(p=>p.raw).join('\n');
     const bank=detectBank(fullText);
@@ -580,7 +625,7 @@ async function extractPDF(file){
 
     if(bank==='Moniepoint'||ft.includes('moniepoint'))monthly=parseMoniepoint(pages,fullText);
     if(!ok(monthly)&&(bank.includes('Kuda')||ft.includes('kuda')))monthly=parseKudaLayout(pages);
-    // OPay: use REFACTORED two-pass layout parser (FIXED VERSION)
+    // OPay: use new two-pass layout parser
     if(!ok(monthly)&&(bank==='OPay'||ft.includes('owealth')||ft.includes('9payment')))monthly=parseOpayLayout(pages,fullText);
     if(!ok(monthly)&&(bank==='PalmPay'||ft.includes('palmpay')))monthly=parsePalmPay(pages,fullText);
     if(!ok(monthly)&&(bank==='Access Bank'||bank==='GTBank'))monthly=parseRowTransaction(pages.map(p=>p.raw));
@@ -609,146 +654,114 @@ function buildSortedMonths(monthly){
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// REFACTORED OPAY PARSER — FIXED VERSION
-// All issues resolved: no line-spread, no hardcoding, strict local classification
+// OPAY PARSER — two-pass layout approach, 5-bucket classification
+// Generic: account name extracted from statement header (works for any customer)
 // ════════════════════════════════════════════════════════════════════════════
+function parseOpayLayout(pages, fullText){
+  const monthly={};
 
-/**
- * Normalizes a name for comparison
- */
-function normalizeName(name) {
-  if (!name || typeof name !== 'string') return '';
-  return name
-    .toLowerCase()
-    .replace(/[^a-z\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+  // Extract account holder name — generic, works for any OPay customer
+  const nameM=fullText.match(/Account Name\s+Account Number[^\n]*\n([A-Z][A-Z ]+[A-Z])/)||
+              fullText.match(/Account Name\s*\n([A-Z][A-Z ]+[A-Z])/i)||
+              fullText.match(/ACCOUNT NAME[:\s]+([A-Z][A-Z ]+[A-Z])/i);
+  const accountName=(nameM?nameM[1]:'').trim();
+  // Name parts for generic self-transfer detection (handles any customer name)
+  const nameParts=accountName.split(/\s+/).filter(p=>p.length>3).map(p=>p.toLowerCase());
 
-/**
- * Checks if text contains sender matching account holder (2+ name parts)
- */
-function isSamePerson(text, accountName) {
-  if (!text || !accountName) return false;
+  // Raw text stops at Savings Account section
+  const rawFull=pages.map(p=>p.raw).join('\n');
+  const savIdx=rawFull.indexOf('Savings Account');
+  const walletText=savIdx>0?rawFull.slice(0,savIdx):rawFull;
+  const lines=walletText.split('\n');
 
-  const sender = normalizeName(text);
-  const acc = normalizeName(accountName);
+  // ── PASS 1: Mark line ranges near key pattern markers ──────────────────
+  const selfXferNearby=new Set();  // own-name inflow from any bank
+  const loanNearby=new Set();      // GTB "loan payment" routing
+  const okashNearby=new Set();     // OKash/EaseMoni/Renmoney disbursements
 
-  const senderParts = sender.split(' ').filter(w => w.length > 2);
-  const accParts = acc.split(' ').filter(w => w.length > 2);
+  for(let i=0;i<lines.length;i++){
+    const ll=lines[i].toLowerCase();
 
-  if (accParts.length < 2) return false;
-
-  let matchCount = 0;
-  for (const part of accParts) {
-    if (senderParts.includes(part)) matchCount++;
-  }
-
-  return matchCount >= 2;
-}
-
-/**
- * Classifies a single transaction line STRICTLY (current line only)
- * Order: loan → internal → self-transfer → realCredit
- */
-function classifyOpayTransaction(line, accountName) {
-  const lowerLine = line.toLowerCase();
-  
-  // 1. LOAN DISBURSEMENT (strict keywords only)
-  if (/okash|easemoni|fairmoney|carbon|branch|palmcredit|renmoney|migo|zedvance/i.test(lowerLine)) {
-    return 'loanDisbursement';
-  }
-  
-  // 2. INTERNAL WALLET MOVEMENT (STRICT exact matches only)
-  if (
-    lowerLine.startsWith('owealth withdrawal') ||
-    lowerLine.startsWith('auto-save to owealth') ||
-    lowerLine.includes('owealth interest earned') ||
-    lowerLine.includes('owealth deposit(transaction refund)')
-  ) {
-    return 'internalMove';
-  }
-  
-  // 3. SELF TRANSFER (dynamic detection, NO hardcoding)
-  if (
-    lowerLine.includes('transfer from') &&
-    isSamePerson(line, accountName)
-  ) {
-    return 'selfTransfer';
-  }
-  
-  // 4. DEFAULT: Real third-party income
-  return 'realCredit';
-}
-
-/**
- * REFACTORED OPay Parser — FIXED
- * - NO line-spread logic (classification per line only)
- * - NO hardcoded names
- * - Fixed credit regex: /--\s*([\d,]+\.\d{2})/
- * - Preserves real inflows
- */
-function parseOpayLayout(pages, fullText) {
-  const monthly = {};
-  
-  // Extract account holder name from statement
-  const nameMatch = fullText.match(/Account Name\s+([A-Z][A-Z\s]{3,})(?=\s+Account Number|\s+Account\s+ID|\n|$)/i) ||
-                   fullText.match(/Account Name\s*\n\s*([A-Z][A-Z\s]{3,})/i);
-  const accountName = nameMatch ? nameMatch[1].trim() : '';
-  
-  // Build text from pages - stop at Savings Account section
-  const rawFull = pages.map(p => p.raw).join('\n');
-  const savingsIdx = rawFull.indexOf('Savings Account');
-  const walletText = savingsIdx > 0 ? rawFull.slice(0, savingsIdx) : rawFull;
-  const lines = walletText.split('\n');
-  
-  // Credit detection regex (FIXED: no balance column dependency)
-  const CREDIT_RE = /--\s*([\d,]+\.\d{2})/;
-  const DATE_RE = /(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})/i;
-  
-  let currentYM = null;
-  
-  // Process each line independently — NO nearby line spreading
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    
-    // Extract date
-    const dateMatch = DATE_RE.exec(line);
-    if (dateMatch) {
-      const monthNum = MONTH_MAP[dateMatch[2].toLowerCase()];
-      if (monthNum) {
-        currentYM = `${dateMatch[3]}-${String(monthNum).padStart(2, '0')}`;
-      }
+    // Generic self-transfer: "Transfer from [ACCOUNT_HOLDER_NAME]"
+    // Requires ≥2 name parts to match (prevents false positives)
+    if(nameParts.length>=2&&nameParts.filter(p=>ll.includes(p)).length>=2&&
+       (ll.includes('transfer from')||ll.includes('nip transfer'))){
+      for(let j=i;j<Math.min(lines.length,i+8);j++)selfXferNearby.add(j);
     }
-    
-    if (!currentYM) continue;
-    
-    // Extract credit amount using FIXED regex
-    const creditMatch = CREDIT_RE.exec(line);
-    if (!creditMatch) continue;
-    
-    const amount = parseFloat(creditMatch[1].replace(/,/g, ''));
-    if (amount <= 0) continue;
-    
-    // STRICT LOCAL CLASSIFICATION — current line only, NO spreading
-    const category = classifyOpayTransaction(line, accountName);
-    
-    // Aggregate
-    if (!monthly[currentYM]) {
-      monthly[currentYM] = {
-        gross: 0, count: 0,
-        internalMove: 0, selfTransfer: 0, loanDisbursement: 0, realCredit: 0,
-        label: ymToLabel(currentYM)
-      };
+
+    // Loan narration through own bank ("Loan payment", "Key lock" = security deposit routed through self)
+    if((ll.includes('loan payment')||ll.includes('key lock')||ll.includes('cardkey lock'))&&
+       nameParts.filter(p=>ll.includes(p)).length>=1){
+      for(let j=i;j<Math.min(lines.length,i+8);j++)loanNearby.add(j);
     }
-    
-    monthly[currentYM].gross += amount;
-    monthly[currentYM].count++;
-    monthly[currentYM][category] += amount;
+
+    // OKash/EaseMoni inbound disbursement
+    if(/transfer from okash\(opay|transfer from easemoni\(opay/.test(ll)){
+      for(let j=i;j<Math.min(lines.length,i+5);j++)okashNearby.add(j);
+    }
+
+    // Renmoney disbursement via MoniePay "Sent from Renmoney" narration
+    if(ll.includes('sent from renmoney')){
+      for(let j=Math.max(0,i-2);j<Math.min(lines.length,i+5);j++)okashNearby.add(j);
+    }
   }
-  
+
+  // ── PASS 2: Find credit lines, classify into 5 buckets ────────────────
+  const CREDIT_RE=/\s--\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/;
+  const DATE_RE=/(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})/i;
+  let currentYM=null;
+
+  for(let i=0;i<lines.length;i++){
+    const line=lines[i];
+    const dm=DATE_RE.exec(line);
+    if(dm){const mo=MONTH_MAP[dm[2].toLowerCase()];if(mo)currentYM=dm[3]+'-'+String(mo).padStart(2,'0');}
+
+    const cm=CREDIT_RE.exec(line);
+    if(!cm||!currentYM)continue;
+    const amt=parseFloat(cm[1].replace(/,/g,''));
+    if(amt<=0)continue;
+
+    const ll=line.toLowerCase();
+    let cat;
+
+    if(okashNearby.has(i)){
+      cat='loanDisbursement';          // OKash/EaseMoni/Renmoney inbound
+    } else if(loanNearby.has(i)){
+      cat='loanDisbursement';          // GTB "Loan payment" routing
+    } else if(selfXferNearby.has(i)){
+      cat='selfTransfer';              // Own-name transfer from other bank
+    } else if(
+      ll.includes('owealth withdrawal(transaction payment)')||
+      ll.includes('auto-save to owealth balance')||
+      ll.includes('owealth interest earned')||
+      ll.includes('owealth deposit(transaction refund)')
+    ){
+      cat='internalMove';              // OWealth circular flow (current line ONLY — no lookback)
+    } else if(
+      ll.includes('sportybet')||ll.includes('betnaija')||ll.includes('bet9ja')||
+      ll.includes('betking')||ll.includes('1xbet')||
+      (ll.includes('opay payment gateway')&&ll.includes('sporty'))
+    ){
+      cat='recycleFunds';              // Betting/gambling winbacks
+    } else {
+      cat='realCredit';                // Genuine third-party income
+    }
+
+    _addToMonthly(monthly,currentYM,amt,cat);
+  }
+
   return monthly;
+}
+
+function _addToMonthly(monthly,ym,amount,cat){
+  if(!monthly[ym])monthly[ym]={
+    gross:0,count:0,
+    internalMove:0,selfTransfer:0,loanDisbursement:0,recycleFunds:0,realCredit:0,
+    label:ymToLabel(ym)
+  };
+  monthly[ym].gross+=amount;
+  monthly[ym].count++;
+  monthly[ym][cat]=(monthly[ym][cat]||0)+amount;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -997,81 +1010,104 @@ function parseRowTransaction(rawPages){
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// FILL INFLOW FIELDS — with expanded breakdown preview table
+// FILL INFLOW FIELDS — 5-column breakdown (recommendation column names)
+// Columns: Total Inflow | Non-Usable Funds | Internal Movements |
+//          External Obligations | Eligible Income
 // ════════════════════════════════════════════════════════════════════════════
 function fillInflowFields(data, bankName){
-  // Build preview table with breakdown columns
   const previewRows=document.getElementById('pdf-preview-rows');
 
-  // Determine which columns have data
-  const hasOWealth=data.some(v=>(v.internalMove||0)>0);
-  const hasSelfXfer=data.some(v=>(v.selfTransfer||0)>0);
-  const hasLoans=data.some(v=>(v.loanDisbursement||0)>0);
+  const hasNonUsable =data.some(v=>(v.internalMove||0)+(v.recycleFunds||0)>0);
+  const hasInternal  =data.some(v=>(v.selfTransfer||0)>0);
+  const hasObligation=data.some(v=>(v.loanDisbursement||0)>0);
 
-  let tableHtml=`<table class="preview-table">
-    <thead><tr>
-      <th>Month</th>
-      <th>Gross</th>
-      ${hasOWealth?'<th>OWealth / Internal</th>':''}
-      ${hasSelfXfer?'<th>Self-Transfers</th>':''}
-      ${hasLoans?'<th>Loan Disbursals</th>':''}
-      <th>Net Real</th>
-    </tr></thead><tbody>`;
+  let tableHtml=`<table class="preview-table"><thead><tr>
+    <th>Month</th>
+    <th class="col-gross">Total Inflow</th>
+    ${hasNonUsable ?'<th class="col-nousable">Non-Usable Funds</th>':''}
+    ${hasInternal  ?'<th class="col-internal">Internal Movements</th>':''}
+    ${hasObligation?'<th class="col-obligation">External Obligations</th>':''}
+    <th class="col-net">Eligible Income</th>
+  </tr></thead><tbody>`;
+
+  let tGross=0,tNonUsable=0,tInternal=0,tObligation=0,tNet=0;
 
   data.forEach((v,idx)=>{
-    const owealth=v.internalMove||0;
-    const selfXfer=v.selfTransfer||0;
-    const loans=v.loanDisbursement||0;
-    const totalDeduct=owealth+selfXfer+loans;
-    const net=Math.max(v.gross-totalDeduct,0);
+    const nonUsable =(v.internalMove||0)+(v.recycleFunds||0);
+    const internal  =(v.selfTransfer||0);
+    const obligation=(v.loanDisbursement||0);
+    const eligible  =Math.max(v.gross-nonUsable-internal-obligation,0);
+    tGross+=v.gross;tNonUsable+=nonUsable;tInternal+=internal;tObligation+=obligation;tNet+=eligible;
 
+    const dash='<span style="color:var(--muted)">—</span>';
     tableHtml+=`<tr>
       <td>${v.label}</td>
       <td class="col-gross">\u20a6${Math.round(v.gross).toLocaleString('en-NG')}</td>
-      ${hasOWealth?`<td class="col-deduct">${owealth>0?'\u2212\u20a6'+Math.round(owealth).toLocaleString('en-NG'):'—'}</td>`:''}
-      ${hasSelfXfer?`<td class="col-deduct">${selfXfer>0?'\u2212\u20a6'+Math.round(selfXfer).toLocaleString('en-NG'):'—'}</td>`:''}
-      ${hasLoans?`<td class="col-deduct">${loans>0?'\u2212\u20a6'+Math.round(loans).toLocaleString('en-NG'):'—'}</td>`:''}
-      <td class="col-net">\u20a6${Math.round(net).toLocaleString('en-NG')}</td>
+      ${hasNonUsable ?`<td class="col-nousable">${nonUsable >0?'\u2212\u20a6'+Math.round(nonUsable).toLocaleString('en-NG') :dash}</td>`:''}
+      ${hasInternal  ?`<td class="col-internal">${internal  >0?'\u2212\u20a6'+Math.round(internal).toLocaleString('en-NG')  :dash}</td>`:''}
+      ${hasObligation?`<td class="col-obligation">${obligation>0?'\u2212\u20a6'+Math.round(obligation).toLocaleString('en-NG'):dash}</td>`:''}
+      <td class="col-net">\u20a6${Math.round(eligible).toLocaleString('en-NG')}</td>
     </tr>`;
 
-    // Fill inflow fields
-    const inflowEl=document.getElementById('inflow-'+(idx+1));
+    // Auto-fill the inflow grid
+    const totalDeduct=nonUsable+internal+obligation;
+    const inflowEl =document.getElementById('inflow-' +(idx+1));
     const recycleEl=document.getElementById('recycle-'+(idx+1));
-    const countEl=document.getElementById('count-'+(idx+1));
-    const lblEl=document.getElementById('lbl-'+(idx+1));
-    if(inflowEl){inflowEl.value=Math.round(v.gross);inflowEl.style.borderColor='var(--green)';}
-    if(recycleEl&&totalDeduct>0){recycleEl.value=Math.round(totalDeduct);recycleEl.style.borderColor='var(--orange)';}
+    const countEl  =document.getElementById('count-'  +(idx+1));
+    const lblEl    =document.getElementById('lbl-'    +(idx+1));
+    if(inflowEl) {inflowEl.value=Math.round(v.gross);inflowEl.style.borderColor='var(--green)';}
+    if(recycleEl){recycleEl.value=Math.round(totalDeduct);if(totalDeduct>0)recycleEl.style.borderColor='var(--orange)';}
     if(countEl&&v.count>0)countEl.value=v.count;
     if(lblEl)lblEl.textContent=v.label;
     updateRecycleRow(idx+1);
   });
 
-  tableHtml+='</tbody></table>';
+  // Totals row
+  const dash='<span style="color:var(--muted)">—</span>';
+  tableHtml+=`</tbody><tfoot><tr>
+    <td style="color:var(--muted);font-size:10px;letter-spacing:1px;text-transform:uppercase">Total</td>
+    <td class="col-gross">\u20a6${Math.round(tGross).toLocaleString('en-NG')}</td>
+    ${hasNonUsable ?`<td class="col-nousable">${tNonUsable >0?'\u2212\u20a6'+Math.round(tNonUsable).toLocaleString('en-NG') :dash}</td>`:''}
+    ${hasInternal  ?`<td class="col-internal">${tInternal  >0?'\u2212\u20a6'+Math.round(tInternal).toLocaleString('en-NG')  :dash}</td>`:''}
+    ${hasObligation?`<td class="col-obligation">${tObligation>0?'\u2212\u20a6'+Math.round(tObligation).toLocaleString('en-NG'):dash}</td>`:''}
+    <td class="col-net">\u20a6${Math.round(tNet).toLocaleString('en-NG')}</td>
+  </tr></tfoot></table>`;
+
+  // Column legend pills
+  tableHtml+=`<div class="legend">
+    <span class="legend-pill pill-gross">Total Inflow = all credits received</span>
+    ${hasNonUsable ?'<span class="legend-pill pill-nousable">Non-Usable = OWealth round-trips &amp; betting winbacks</span>':''}
+    ${hasInternal  ?'<span class="legend-pill pill-internal">Internal Movements = own-name transfers from other banks</span>':''}
+    ${hasObligation?'<span class="legend-pill pill-obligation">External Obligations = loan disbursals (OKash, EaseMoni, Renmoney…)</span>':''}
+    <span class="legend-pill pill-net">Eligible Income = verified usable income for underwriting</span>
+  </div>`;
+
   previewRows.innerHTML=tableHtml;
   document.getElementById('pdf-preview').style.display='block';
 
-  // Recycling panel
-  const totals={internalMove:0,selfTransfer:0,loanDisbursement:0};
+  // Recycling breakdown panel (detail view)
+  const tot={internalMove:0,selfTransfer:0,loanDisbursement:0,recycleFunds:0};
   data.forEach(v=>{
-    totals.internalMove+=(v.internalMove||0);
-    totals.selfTransfer+=(v.selfTransfer||0);
-    totals.loanDisbursement+=(v.loanDisbursement||0);
+    tot.internalMove  +=(v.internalMove  ||0);
+    tot.selfTransfer  +=(v.selfTransfer  ||0);
+    tot.loanDisbursement+=(v.loanDisbursement||0);
+    tot.recycleFunds  +=(v.recycleFunds  ||0);
   });
-  const totalRecycled=totals.internalMove+totals.selfTransfer+totals.loanDisbursement;
+  const totalDeducted=tot.internalMove+tot.selfTransfer+tot.loanDisbursement+tot.recycleFunds;
 
-  if(totalRecycled>0){
-    const panel=document.getElementById('recycle-panel');
-    const rows=document.getElementById('recycle-rows');
-    panel.style.display='block';
+  if(totalDeducted>0){
+    document.getElementById('recycle-panel').style.display='block';
     let html='';
-    if(totals.internalMove>0)
-      html+=`<div class="recycle-row"><span>OWealth / Internal Wallet Moves</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(totals.internalMove).toLocaleString('en-NG')}</span></div>`;
-    if(totals.selfTransfer>0)
-      html+=`<div class="recycle-row"><span>Self-Transfers (same account holder)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(totals.selfTransfer).toLocaleString('en-NG')}</span></div>`;
-    if(totals.loanDisbursement>0)
-      html+=`<div class="recycle-row"><span>Loan Disbursements (OKash, EaseMoni, Renmoney, etc.)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(totals.loanDisbursement).toLocaleString('en-NG')}</span></div>`;
-    html+=`<div class="recycle-row"><span>Total Deducted from Credits</span><span>\u2212\u20a6${Math.round(totalRecycled).toLocaleString('en-NG')}</span></div>`;
-    rows.innerHTML=html;
+    if(tot.internalMove>0)
+      html+=`<div class="recycle-row"><span>Non-Usable — OWealth / Internal Wallet Round-Trips</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.internalMove).toLocaleString('en-NG')}</span></div>`;
+    if(tot.recycleFunds>0)
+      html+=`<div class="recycle-row"><span>Non-Usable — Betting / Gambling Winbacks</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.recycleFunds).toLocaleString('en-NG')}</span></div>`;
+    if(tot.selfTransfer>0)
+      html+=`<div class="recycle-row"><span>Internal Movements — Own-Name Transfers (other banks → this account)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.selfTransfer).toLocaleString('en-NG')}</span></div>`;
+    if(tot.loanDisbursement>0)
+      html+=`<div class="recycle-row"><span>External Obligations — Loan Disbursals (OKash, EaseMoni, Renmoney…)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.loanDisbursement).toLocaleString('en-NG')}</span></div>`;
+    html+=`<div class="recycle-row"><span>Total Non-Eligible Deductions</span><span>\u2212\u20a6${Math.round(totalDeducted).toLocaleString('en-NG')}</span></div>`;
+    document.getElementById('recycle-rows').innerHTML=html;
   }
 }
 </script>
