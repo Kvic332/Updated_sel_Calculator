@@ -670,14 +670,20 @@ function parseOpayLayout(pages, fullText){
 
   // Use the reconstructed visual rows instead of raw text. Raw concatenation
   // can merge unrelated fragments and make debit rows look like credits.
-  const lines=[];
+  const rows=[];
   let stop=false;
   for(const page of pages){
-    for(const row of page.lines){
-      const text=(row.text||'').replace(/\s+/g,' ').trim();
+    for(const line of page.lines){
+      const text=(line.text||'').replace(/\s+/g,' ').trim();
       if(!text)continue;
       if(text.includes('Savings Account')){stop=true;break;}
-      lines.push(text);
+      rows.push({
+        text,
+        items:(line.items||[]).map(item=>({
+          str:(item.str||'').trim(),
+          x:item.x
+        }))
+      });
     }
     if(stop)break;
   }
