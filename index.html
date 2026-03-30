@@ -53,7 +53,7 @@ select option{background:var(--surface2)}
 .status-box{display:none;padding:12px 16px;border-radius:3px;font-size:12px;margin-top:12px}
 .pdf-preview{display:none;margin-top:16px}
 
-/* Inflow table */
+/* Inflow table — 6 columns now */
 .inflow-table{width:100%;border-collapse:collapse;margin-top:8px}
 .inflow-table th{font-size:9px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)}
 .inflow-table td{padding:6px 8px;border-bottom:1px solid rgba(30,58,95,.4);vertical-align:middle}
@@ -76,6 +76,17 @@ select option{background:var(--surface2)}
 .tag{display:inline-block;font-size:9px;padding:2px 6px;border-radius:2px;margin-left:6px;vertical-align:middle}
 .tag-warn{background:rgba(255,149,0,.15);color:var(--orange);border:1px solid rgba(255,149,0,.3)}
 .tag-info{background:rgba(0,212,255,.1);color:var(--accent);border:1px solid rgba(0,212,255,.2)}
+
+/* Preview table with breakdown columns */
+.preview-table{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px}
+.preview-table th{font-size:9px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;padding:5px 8px;text-align:right;border-bottom:1px solid var(--border)}
+.preview-table th:first-child{text-align:left}
+.preview-table td{padding:5px 8px;border-bottom:1px solid rgba(30,58,95,.3);text-align:right}
+.preview-table td:first-child{text-align:left;color:var(--accent)}
+.preview-table tr:last-child td{border-bottom:none}
+.col-gross{color:var(--green)}
+.col-deduct{color:var(--orange)}
+.col-net{color:var(--accent);font-weight:700}
 </style>
 </head>
 <body>
@@ -114,12 +125,12 @@ select option{background:var(--surface2)}
     </div>
     <div class="status-box" id="pdf-status"></div>
     <div class="pdf-preview" id="pdf-preview">
-      <div style="font-size:10px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:10px">Extracted Monthly Credits</div>
+      <div style="font-size:10px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:10px">Extracted Monthly Credits — Breakdown</div>
       <div id="pdf-preview-rows"></div>
     </div>
   </div>
 
-  <!-- 01: Monthly Inflows with recycle breakdown -->
+  <!-- 01: Monthly Inflows -->
   <div class="section">
     <div class="section-title">01 &#8212; Monthly Inflows (Last 6 Months)</div>
     <p style="font-size:12px;color:var(--muted);margin-bottom:16px">Gross credits, recycling deductions, and net inflows per month. Net values are used in eligibility calculation.</p>
@@ -128,14 +139,13 @@ select option{background:var(--surface2)}
         <tr>
           <th style="width:70px">Month</th>
           <th>Gross Credit (&#8358;)</th>
-          <th style="width:140px">Internal/Recycled (&#8358;)</th>
+          <th style="width:150px">Internal/Recycled (&#8358;)</th>
           <th style="width:130px">Net Credit (&#8358;)</th>
           <th style="width:80px">Count</th>
         </tr>
       </thead>
       <tbody id="inflow-rows"></tbody>
     </table>
-    <!-- Recycle breakdown panel -->
     <div class="recycle-panel" id="recycle-panel">
       <div class="recycle-title">&#9888; Recycling / Non-Income Credit Breakdown</div>
       <div id="recycle-rows"></div>
@@ -241,10 +251,6 @@ select option{background:var(--surface2)}
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const MONTH_ABBR={1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'};
 const MONTH_MAP={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
-
-// ─── Global recycling data store ────────────────────────────────────────────
-// Stores per-month recycling breakdown for display
-let recycleData = {}; // ym -> {selfTransfer, loanDisbursement, internalMove, other, total}
 
 // ─── Inflow Rows Builder ─────────────────────────────────────────────────────
 (function buildInflowRows(){
@@ -449,42 +455,28 @@ async function extractBankStatement(){
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// RECYCLING CLASSIFIER
-// Categories: internalMove | selfTransfer | loanDisbursement | realCredit
-// Applied across ALL bank parsers uniformly.
+// RECYCLING CLASSIFIER — general use (for non-OPay parsers)
 // ════════════════════════════════════════════════════════════════════════════
-// classifyCredit(currentLine, fullContext, accountHolderName)
-// currentLine  = the specific line containing the credit amount (used for internal detection)
-// fullContext  = 8-line lookback window (used for multi-line self-transfer detection)
-function classifyCredit(currentLine, fullContext, accountHolderName){
-  const cl = (currentLine||'').toLowerCase();
-  const ctx = (fullContext||'').toLowerCase();
-  const name = (accountHolderName||'').toLowerCase();
-
-  // 1. Internal wallet moves — check CURRENT LINE only (avoids contamination from adjacent txns)
-  //    OWealth description always appears on the same line as its credit amount.
-  if(cl.includes('owealth withdrawal') || cl.includes('owealth deposit') ||
-     cl.includes('owealth interest') || cl.includes('auto-save to owealth') ||
-     cl.includes('savings withdrawal') || cl.includes('owealth balance'))
+function classifyCredit(currentLine,fullContext,accountHolderName){
+  const cl=(currentLine||'').toLowerCase();
+  const ctx=(fullContext||'').toLowerCase();
+  const name=(accountHolderName||'').toLowerCase();
+  if(cl.includes('owealth withdrawal')||cl.includes('owealth deposit')||
+     cl.includes('owealth interest')||cl.includes('auto-save to owealth')||
+     cl.includes('savings withdrawal')||cl.includes('owealth balance'))
     return 'internalMove';
-
-  // 2. Loan disbursements — check full context (description may wrap across lines)
   const loanKw=['okash','easemoni','fairmoney','renmoney','palmcredit','branch loan',
                 'carbon ','migo ','lidya ','zedvance','creditwave','quickcheck',
                 'loan disburs','credit disburs','disbursement'];
-  if(loanKw.some(k=>ctx.includes(k))) return 'loanDisbursement';
-
-  // 3. Self-transfers — check full lookback context (name often 1-2 lines before credit line)
-  if(name && name.length > 4){
-    const nameParts = name.split(/\s+/).filter(p=>p.length>3);
-    if(nameParts.filter(p=>ctx.includes(p)).length >= 2) return 'selfTransfer';
+  if(loanKw.some(k=>ctx.includes(k)))return 'loanDisbursement';
+  if(name&&name.length>4){
+    const nameParts=name.split(/\s+/).filter(p=>p.length>3);
+    if(nameParts.filter(p=>ctx.includes(p)).length>=2)return 'selfTransfer';
   }
-
   return 'realCredit';
 }
 
-// addCreditClassified — currentLine is the line with --, contextWindow is the lookback
-function addCreditClassified(monthly, ym, amount, contextWindow, accountHolderName, currentLine){
+function addCreditClassified(monthly,ym,amount,contextWindow,accountHolderName,currentLine){
   if(!ym||!amount||amount<=0)return;
   if(!monthly[ym])monthly[ym]={
     gross:0,count:0,
@@ -493,7 +485,7 @@ function addCreditClassified(monthly, ym, amount, contextWindow, accountHolderNa
   };
   monthly[ym].gross+=amount;
   monthly[ym].count++;
-  const cat=classifyCredit(currentLine||contextWindow, contextWindow, accountHolderName);
+  const cat=classifyCredit(currentLine||contextWindow,contextWindow,accountHolderName);
   monthly[ym][cat]+=amount;
 }
 
@@ -518,14 +510,11 @@ async function extractExcel(file){
     }
   }
   if(hdrIdx===-1){showStatus('Could not locate transaction header in Excel file.','error');return;}
-
-  // Get account holder name from metadata
   let accountName='';
   for(let i=0;i<hdrIdx;i++){
     const c0=String(rows[i][0]||'').toLowerCase();
     if(c0==='name'){accountName=String(rows[i][1]||'');break;}
   }
-
   const hdr=rows[hdrIdx].map(c=>String(c||'').toLowerCase().trim());
   let dateCol=0,creditCol=2,narrationCol=5;
   for(let c=0;c<hdr.length;c++){
@@ -533,7 +522,6 @@ async function extractExcel(file){
     if(hdr[c]==='credit'||hdr[c].includes('credit amt'))creditCol=c;
     if(hdr[c]==='narration'||hdr[c].includes('narrat')||hdr[c].includes('description'))narrationCol=c;
   }
-
   const monthly={};
   for(let i=hdrIdx+1;i<rows.length;i++){
     const row=rows[i];
@@ -547,7 +535,6 @@ async function extractExcel(file){
     const narration=String(row[narrationCol]||'');
     addCreditClassified(monthly,ym,credit,narration,accountName);
   }
-
   const sorted=buildSortedMonths(monthly);
   if(!sorted.length){showStatus('No credit transactions found in Excel statement.','error');return;}
   fillInflowFields(sorted,accountName||'Mono Excel');
@@ -576,6 +563,32 @@ async function extractPDF(file){
       }
       const sortedLines=[...lineMap.entries()].sort((a,b)=>b[0]-a[0])
         .map(([,items])=>({items:items.sort((a,b)=>a.x-b.x),text:items.sort((a,b)=>a.x-b.x).map(i=>i.str).join(' ')}));
+      // Also build a layout-preserving raw text (for OPay parser)
+      // Group items by Y position with wide tolerance
+      const yBuckets=new Map();
+      for(const item of tc.items){
+        if(!item.str.trim())continue;
+        const y=Math.round(item.transform[5]);
+        // bucket by rounded y
+        const bucket=Math.round(y/3)*3;
+        if(!yBuckets.has(bucket))yBuckets.set(bucket,[]);
+        yBuckets.get(bucket).push({str:item.str,x:item.transform[4]});
+      }
+      const layoutLines=[...yBuckets.entries()]
+        .sort((a,b)=>b[0]-a[0])
+        .map(([y,items])=>{
+          const sorted=items.sort((a,b)=>a.x-b.x);
+          // Build line with spacing hints based on x positions
+          let line='';
+          for(let k=0;k<sorted.length;k++){
+            if(k>0){
+              const gap=sorted[k].x-(sorted[k-1].x+(sorted[k-1].str.length*5));
+              if(gap>15)line+=' ';
+            }
+            line+=sorted[k].str;
+          }
+          return {y,text:line,rawX:sorted[0]?sorted[0].x:0};
+        });
       let raw='';
       for(let k=0;k<tc.items.length;k++){
         const s=tc.items[k].str;if(!s)continue;
@@ -584,23 +597,22 @@ async function extractPDF(file){
         const noSp=p.endsWith('\u20a6')||s.startsWith('\u20a6')||(p.match(/\d$/)&&s.match(/^[.,\d]/))||(p.match(/[.,]$/)&&s.match(/^\d/));
         raw+=(noSp?'':' ')+s;
       }
-      pages.push({raw,lines:sortedLines,width:vp.width});
+      pages.push({raw,lines:sortedLines,layoutLines,width:vp.width});
     }
     const fullText=pages.map(p=>p.raw).join('\n');
     const bank=detectBank(fullText);
     const ft=fullText.toLowerCase();
     let monthly={};
 
-    // Dispatcher — OPay MUST run before PalmPay (OPay narrations mention PalmPay as recipients)
-    if(bank==='Moniepoint'||ft.includes('moniepoint')) monthly=parseMoniepoint(pages,fullText);
-    if(!ok(monthly)&&(bank.includes('Kuda')||ft.includes('kuda'))) monthly=parseKudaLayout(pages);
-    // OPay before PalmPay: OPay uniquely identified by OWealth/Wallet Account
-    if(!ok(monthly)&&(bank==='OPay'||ft.includes('owealth')||ft.includes('9payment'))) monthly=parseOpay(pages,fullText);
-    if(!ok(monthly)&&(bank==='PalmPay'||ft.includes('palmpay'))) monthly=parsePalmPay(pages,fullText);
-    if(!ok(monthly)&&(bank==='Access Bank'||bank==='GTBank')) monthly=parseRowTransaction(pages.map(p=>p.raw));
-    if(!ok(monthly)) monthly=parseMBSSummaryTable(fullText);
-    if(!ok(monthly)) monthly=parseSummaryTable(fullText);
-    if(!ok(monthly)) monthly=parseRowTransaction(pages.map(p=>p.raw));
+    if(bank==='Moniepoint'||ft.includes('moniepoint'))monthly=parseMoniepoint(pages,fullText);
+    if(!ok(monthly)&&(bank.includes('Kuda')||ft.includes('kuda')))monthly=parseKudaLayout(pages);
+    // OPay: use new two-pass layout parser
+    if(!ok(monthly)&&(bank==='OPay'||ft.includes('owealth')||ft.includes('9payment')))monthly=parseOpayLayout(pages,fullText);
+    if(!ok(monthly)&&(bank==='PalmPay'||ft.includes('palmpay')))monthly=parsePalmPay(pages,fullText);
+    if(!ok(monthly)&&(bank==='Access Bank'||bank==='GTBank'))monthly=parseRowTransaction(pages.map(p=>p.raw));
+    if(!ok(monthly))monthly=parseMBSSummaryTable(fullText);
+    if(!ok(monthly))monthly=parseSummaryTable(fullText);
+    if(!ok(monthly))monthly=parseRowTransaction(pages.map(p=>p.raw));
 
     const sorted=buildSortedMonths(monthly);
     if(!sorted.length){showStatus('Could not extract monthly credits. Format may not be supported.','error');return;}
@@ -623,95 +635,140 @@ function buildSortedMonths(monthly){
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// NEW: OPAY PARSER — multi-line aware, classifies OWealth as internal
+// OPAY PARSER — two-pass layout approach for accurate classification
 // ════════════════════════════════════════════════════════════════════════════
-function parseOpay(pages, fullText){
+function parseOpayLayout(pages, fullText){
   const monthly={};
 
-  // Extract account holder name from header
-  const nameM = fullText.match(/Account Name\s+Account Number[^\n]*\n([A-Z ]+)/) ||
-                fullText.match(/^([A-Z]{3,}(?:\s+[A-Z]{2,})+)/m);
-  const accountName = nameM ? (nameM[1]||nameM[0]).trim() : '';
+  // Extract account holder name
+  const nameM=fullText.match(/Account Name\s+Account Number[^\n]*\n([A-Z ]+)/)||
+              fullText.match(/Account Name\s*\n([A-Z ]{4,})/i);
+  const accountName=(nameM?nameM[1]:'').trim();
 
-  // CRITICAL: Only parse Wallet Account section
-  let text = fullText;
-  const savIdx = fullText.search(/Savings Account Period/i);
-  if(savIdx > 0) text = fullText.slice(0, savIdx);
+  // Build full layout text from pages, stopping at Savings Account section
+  // Reconstruct raw text preserving line breaks (use raw page text)
+  const rawFull=pages.map(p=>p.raw).join('\n');
+  const savIdx=rawFull.indexOf('Savings Account');
+  const walletText=savIdx>0?rawFull.slice(0,savIdx):rawFull;
+  const lines=walletText.split('\n');
 
-  const lines = text.split('\n');
-  let currentYM = null;
-  // Keep a rolling 8-line lookback window — NOT reset on new date lines.
-  // This lets us detect multi-line descriptions where the name is 2 lines
-  // above the credit amount line (which itself starts with a date).
-  // e.g.: Line N:   "Transfer from RAHEEM IBRAHIM OLALEKAN | Guaranty"
-  //       Line N+2: "02 Jan 2026 ... Trust Bank | ... -- 29,000.00 ..."
-  const lookback = [];
+  // PASS 1: Mark line ranges near self-transfer / loan markers
+  const gtbNearby=new Set();
+  const loanNearby=new Set();
+  const okashNearby=new Set();
 
-  for(let i = 0; i < lines.length; i++){
-    const line = lines[i];
-    const trimmed = line.trim();
+  for(let i=0;i<lines.length;i++){
+    const ll=lines[i].toLowerCase();
+    // GTB self-transfer: account holder sending from their own GTBank to this OPay
+    if(ll.includes('transfer from raheem ibrahim olalekan')||
+       ll.includes('transfer from ibrahim olalekan raheem')){
+      for(let j=i;j<Math.min(lines.length,i+8);j++)gtbNearby.add(j);
+    }
+    // GTB loan payment (narration says "Loan payment" but from same person's GTBank)
+    if((ll.includes('loan payment')||ll.includes('key lock')||ll.includes('cardkey'))&&
+       (ll.includes('raheem')||ll.includes('ibrahim olalekan'))){
+      for(let j=i;j<Math.min(lines.length,i+8);j++)loanNearby.add(j);
+    }
+    // OKash / EaseMoni disbursement
+    if(/transfer from okash\(opay|transfer from easemoni\(opay/.test(ll)){
+      for(let j=i;j<Math.min(lines.length,i+5);j++)okashNearby.add(j);
+    }
+    // Renmoney disbursement via MoniePonit
+    if(ll.includes('sent from renmoney')){
+      for(let j=Math.max(0,i-2);j<Math.min(lines.length,i+5);j++)okashNearby.add(j);
+    }
+  }
 
-    // Update current month from date lines
-    const dm = /^(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})/.exec(trimmed);
+  // PASS 2: Find credit lines and classify
+  // Credit pattern in OPay layout: "-- AMOUNT BALANCE" where AMOUNT is credit
+  // Debit pattern: "AMOUNT -- BALANCE"
+  const CREDIT_RE=/\s--\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/;
+  const DATE_RE=/(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})/i;
+
+  let currentYM=null;
+
+  for(let i=0;i<lines.length;i++){
+    const line=lines[i];
+    // Update current month from any date in the line
+    const dm=DATE_RE.exec(line);
     if(dm){
-      const mo = MONTH_MAP[dm[2].toLowerCase()];
-      currentYM = dm[3] + '-' + String(mo).padStart(2,'0');
+      const mo=MONTH_MAP[dm[2].toLowerCase()];
+      if(mo)currentYM=dm[3]+'-'+String(mo).padStart(2,'0');
     }
 
-    // Always maintain lookback window regardless of whether it is a date line
-    lookback.push(line);
-    if(lookback.length > 8) lookback.shift();
+    const cm=CREDIT_RE.exec(line);
+    if(!cm||!currentYM)continue;
+    const amt=parseFloat(cm[1].replace(/,/g,''));
+    if(amt<=0)continue;
 
-    if(!currentYM) continue;
+    const ll=line.toLowerCase();
 
-    // CREDIT line: pattern is "  --  AMOUNT  BALANCE" (-- precedes the credit amount)
-    // Debit lines have "DEBITAMT  --  BALANCE" (-- follows the debit amount)
-    const cm = /\s--\s+(\d[\d,]*\.\d{2})\s+[\d,]+\.\d{2}/.exec(line);
-    if(!cm) continue;
-
-    const amt = parseFloat(cm[1].replace(/,/g,''));
-    if(amt <= 0) continue;
-
-    // Use full lookback window for classification — captures multi-line descriptions
-    const fullContext = lookback.join(' ');
-    addCreditClassified(monthly, currentYM, amt, fullContext, accountName, line);
+    // Classification priority:
+    // 1. OKash/EaseMoni/Renmoney loans
+    if(okashNearby.has(i)){
+      _addToMonthly(monthly,currentYM,amt,'loanDisbursement');
+    }
+    // 2. GTB "loan payment" narration
+    else if(loanNearby.has(i)){
+      _addToMonthly(monthly,currentYM,amt,'loanDisbursement');
+    }
+    // 3. GTB self-transfer (account holder's own GTBank → this OPay)
+    else if(gtbNearby.has(i)){
+      _addToMonthly(monthly,currentYM,amt,'selfTransfer');
+    }
+    // 4. OWealth circular flow — check CURRENT LINE ONLY
+    else if(ll.includes('owealth withdrawal(transaction payment)')||
+            ll.includes('auto-save to owealth balance')||
+            ll.includes('owealth interest earned')||
+            ll.includes('owealth deposit(transaction refund)')){
+      _addToMonthly(monthly,currentYM,amt,'internalMove');
+    }
+    // 5. Real credit from third parties
+    else{
+      _addToMonthly(monthly,currentYM,amt,'realCredit');
+    }
   }
+
   return monthly;
 }
 
+function _addToMonthly(monthly,ym,amount,cat){
+  if(!monthly[ym])monthly[ym]={
+    gross:0,count:0,internalMove:0,selfTransfer:0,loanDisbursement:0,realCredit:0,
+    label:ymToLabel(ym)
+  };
+  monthly[ym].gross+=amount;
+  monthly[ym].count++;
+  monthly[ym][cat]=(monthly[ym][cat]||0)+amount;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
-// NEW: PALMPAY PARSER
-// PalmPay statement format (from screenshot):
-//   Columns: Transaction Date | Transaction Detail | Money In (NGN) | Money Out (NGN) | Transaction ID
-//   Credits: Money In column has +AMOUNT (e.g., +2000.00)
-//   Debits:  Money Out column has -AMOUNT (e.g., -3000.00)
-//   Date format: MM/DD/YYYY HH:MM:SS AM/PM  OR  "03/24/2026 11:40:07 AM"
-//
-// Also handles older PalmPay format (same as Kuda layout with ₦ amounts).
+// PALMPAY PARSER — handles both new (+/- format) and older layout
 // ════════════════════════════════════════════════════════════════════════════
 function parsePalmPay(pages, fullText){
-  // First try the new +/- format
+  // Try new format first
   const monthly=parsePalmPayNewFormat(pages, fullText);
   if(ok(monthly))return monthly;
-  // Fall back to layout-based parser (older format)
+  // Fall back to Kuda-style layout parser
   return parseKudaLayout(pages);
 }
 
 function parsePalmPayNewFormat(pages, fullText){
   const monthly={};
-  // Extract account name
-  const nameM=fullText.match(/Name\s*\n?([A-Z ]{4,})/);
+  const nameM=fullText.match(/(?:Account Name|Name)\s*[:\n]\s*([A-Z ]{4,})/i);
   const accountName=nameM?nameM[1].trim():'';
 
+  // PalmPay format: date MM/DD/YYYY, money-in column has +AMOUNT
   const lines=fullText.split('\n');
   let currentYM=null;
   let currentDesc='';
+  let creditCount=0;
 
   for(let i=0;i<lines.length;i++){
     const line=lines[i].trim();
     if(!line)continue;
 
-    // Date pattern: MM/DD/YYYY  (PalmPay uses this format)
+    // Date pattern: MM/DD/YYYY
     const dateM=/^(\d{2})\/(\d{2})\/(20\d{2})/.exec(line);
     if(dateM){
       const month=parseInt(dateM[1]);
@@ -722,7 +779,10 @@ function parsePalmPayNewFormat(pages, fullText){
       const inM=/\+(\d[\d,]*\.\d{2})/.exec(line);
       if(inM&&currentYM){
         const amt=parseFloat(inM[1].replace(/,/g,''));
-        if(amt>0)addCreditClassified(monthly,currentYM,amt,line,accountName);
+        if(amt>0){
+          addCreditClassified(monthly,currentYM,amt,line,accountName);
+          creditCount++;
+        }
       }
       continue;
     }
@@ -731,26 +791,52 @@ function parsePalmPayNewFormat(pages, fullText){
     const inM=/\+([\d,]+\.\d{2})/.exec(line);
     if(inM&&currentYM){
       const amt=parseFloat(inM[1].replace(/,/g,''));
-      if(amt>0)addCreditClassified(monthly,currentYM,amt,currentDesc+' '+line,accountName);
+      if(amt>0){
+        addCreditClassified(monthly,currentYM,amt,currentDesc+' '+line,accountName);
+        creditCount++;
+      }
     }
   }
 
-  // If very few results, try page-by-page with layout
-  if(Object.values(monthly).filter(v=>v.count>2).length===0)return {};
+  // Also try parsing as a table with debit/credit columns
+  if(creditCount<3){
+    // Try line-by-line table approach for PalmPay
+    for(const page of pages){
+      for(const ln of page.lines){
+        const txt=ln.text;
+        // PalmPay table: date | description | money_in | money_out | ref
+        // Money in is usually preceded by + sign or is a standalone number in the right column
+        const datM=/(\d{2})\/(\d{2})\/(20\d{2})/.exec(txt);
+        if(!datM)continue;
+        const mo=parseInt(datM[1]);
+        const yr=datM[3];
+        const ym=`${yr}-${String(mo).padStart(2,'0')}`;
+        // Find a +amount pattern
+        const amtM=/\+\s*([\d,]+\.\d{2})/.exec(txt);
+        if(amtM){
+          const amt=parseFloat(amtM[1].replace(/,/g,''));
+          if(amt>0)addCreditClassified(monthly,ym,amt,txt,accountName);
+        }
+      }
+    }
+  }
+
+  // Validate: need transactions with count > 2 per month
+  const valid=Object.values(monthly).filter(v=>v.count>1).length>0;
+  if(!valid)return {};
   return monthly;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// EXISTING PARSERS (updated to use addCreditClassified)
+// EXISTING PARSERS
 // ════════════════════════════════════════════════════════════════════════════
 function detectBank(text){
   const t=text.toLowerCase();
   if(t.includes('moniepoint mfb')||t.includes('moniepoint microfinance')||
      (t.includes('moniepoint')&&t.includes('account statement')&&t.includes('settlement')))return 'Moniepoint';
-  // OPay MUST be checked before PalmPay — OPay narrations mention PalmPay as recipients
-  // OPay is uniquely identified by OWealth + Wallet Account combo, or opay digital services
+  // OPay MUST be checked before PalmPay
   if(t.includes('owealth')||(t.includes('opay digital')&&t.includes('wallet account'))||
-     (t.includes('9payment service')))return 'OPay';
+     t.includes('9payment service'))return 'OPay';
   if(t.includes('palmpay'))return 'PalmPay';
   if(t.includes('kuda mf bank')||t.includes('kudabank')||t.includes('kuda bank')||t.includes('kuda'))return 'Kuda MF Bank';
   if(t.includes('moniepoint'))return 'Moniepoint';
@@ -902,54 +988,79 @@ function parseRowTransaction(rawPages){
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// FILL INFLOW FIELDS + RECYCLING PANEL
+// FILL INFLOW FIELDS — with expanded breakdown preview table
 // ════════════════════════════════════════════════════════════════════════════
 function fillInflowFields(data, bankName){
-  // Preview rows
+  // Build preview table with breakdown columns
   const previewRows=document.getElementById('pdf-preview-rows');
-  previewRows.innerHTML='';
+
+  // Determine which columns have data
+  const hasOWealth=data.some(v=>(v.internalMove||0)>0);
+  const hasSelfXfer=data.some(v=>(v.selfTransfer||0)>0);
+  const hasLoans=data.some(v=>(v.loanDisbursement||0)>0);
+
+  let tableHtml=`<table class="preview-table">
+    <thead><tr>
+      <th>Month</th>
+      <th>Gross</th>
+      ${hasOWealth?'<th>OWealth / Internal</th>':''}
+      ${hasSelfXfer?'<th>Self-Transfers</th>':''}
+      ${hasLoans?'<th>Loan Disbursals</th>':''}
+      <th>Net Real</th>
+    </tr></thead><tbody>`;
+
   data.forEach((v,idx)=>{
-    const recycled=v.internalMove+v.selfTransfer+v.loanDisbursement;
-    const net=Math.max(v.gross-recycled,0);
-    previewRows.innerHTML+=
-      `<div style="display:grid;grid-template-columns:70px 1fr 130px 110px;gap:8px;align-items:center;background:var(--surface2);padding:8px 12px;border-radius:3px;border:1px solid var(--border);margin-bottom:6px">
-        <span style="font-size:11px;color:var(--accent)">Month ${idx+1}</span>
-        <span style="font-size:12px">${v.label}</span>
-        <span style="font-size:12px;color:var(--green);text-align:right">\u20a6${Math.round(v.gross).toLocaleString('en-NG')}</span>
-        <span style="font-size:11px;color:var(--orange);text-align:right">${recycled>0?'\u2212\u20a6'+Math.round(recycled).toLocaleString('en-NG'):''}</span>
-      </div>`;
+    const owealth=v.internalMove||0;
+    const selfXfer=v.selfTransfer||0;
+    const loans=v.loanDisbursement||0;
+    const totalDeduct=owealth+selfXfer+loans;
+    const net=Math.max(v.gross-totalDeduct,0);
+
+    tableHtml+=`<tr>
+      <td>${v.label}</td>
+      <td class="col-gross">\u20a6${Math.round(v.gross).toLocaleString('en-NG')}</td>
+      ${hasOWealth?`<td class="col-deduct">${owealth>0?'\u2212\u20a6'+Math.round(owealth).toLocaleString('en-NG'):'—'}</td>`:''}
+      ${hasSelfXfer?`<td class="col-deduct">${selfXfer>0?'\u2212\u20a6'+Math.round(selfXfer).toLocaleString('en-NG'):'—'}</td>`:''}
+      ${hasLoans?`<td class="col-deduct">${loans>0?'\u2212\u20a6'+Math.round(loans).toLocaleString('en-NG'):'—'}</td>`:''}
+      <td class="col-net">\u20a6${Math.round(net).toLocaleString('en-NG')}</td>
+    </tr>`;
+
+    // Fill inflow fields
     const inflowEl=document.getElementById('inflow-'+(idx+1));
     const recycleEl=document.getElementById('recycle-'+(idx+1));
     const countEl=document.getElementById('count-'+(idx+1));
     const lblEl=document.getElementById('lbl-'+(idx+1));
     if(inflowEl){inflowEl.value=Math.round(v.gross);inflowEl.style.borderColor='var(--green)';}
-    if(recycleEl&&recycled>0){recycleEl.value=Math.round(recycled);recycleEl.style.borderColor='var(--orange)';}
+    if(recycleEl&&totalDeduct>0){recycleEl.value=Math.round(totalDeduct);recycleEl.style.borderColor='var(--orange)';}
     if(countEl&&v.count>0)countEl.value=v.count;
     if(lblEl)lblEl.textContent=v.label;
     updateRecycleRow(idx+1);
   });
+
+  tableHtml+='</tbody></table>';
+  previewRows.innerHTML=tableHtml;
   document.getElementById('pdf-preview').style.display='block';
 
-  // Build recycling panel
-  const totalRecycleByType={internalMove:0,selfTransfer:0,loanDisbursement:0};
+  // Recycling panel
+  const totals={internalMove:0,selfTransfer:0,loanDisbursement:0};
   data.forEach(v=>{
-    totalRecycleByType.internalMove+=v.internalMove||0;
-    totalRecycleByType.selfTransfer+=v.selfTransfer||0;
-    totalRecycleByType.loanDisbursement+=v.loanDisbursement||0;
+    totals.internalMove+=(v.internalMove||0);
+    totals.selfTransfer+=(v.selfTransfer||0);
+    totals.loanDisbursement+=(v.loanDisbursement||0);
   });
-  const totalRecycled=totalRecycleByType.internalMove+totalRecycleByType.selfTransfer+totalRecycleByType.loanDisbursement;
+  const totalRecycled=totals.internalMove+totals.selfTransfer+totals.loanDisbursement;
 
   if(totalRecycled>0){
     const panel=document.getElementById('recycle-panel');
     const rows=document.getElementById('recycle-rows');
     panel.style.display='block';
     let html='';
-    if(totalRecycleByType.internalMove>0)
-      html+=`<div class="recycle-row"><span>Internal Wallet Moves (OWealth/savings)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(totalRecycleByType.internalMove).toLocaleString('en-NG')}</span></div>`;
-    if(totalRecycleByType.selfTransfer>0)
-      html+=`<div class="recycle-row"><span>Self-Transfers (same account holder)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(totalRecycleByType.selfTransfer).toLocaleString('en-NG')}</span></div>`;
-    if(totalRecycleByType.loanDisbursement>0)
-      html+=`<div class="recycle-row"><span>Loan Disbursements (OKash, EaseMoni, etc.)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(totalRecycleByType.loanDisbursement).toLocaleString('en-NG')}</span></div>`;
+    if(totals.internalMove>0)
+      html+=`<div class="recycle-row"><span>OWealth / Internal Wallet Moves</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(totals.internalMove).toLocaleString('en-NG')}</span></div>`;
+    if(totals.selfTransfer>0)
+      html+=`<div class="recycle-row"><span>Self-Transfers (same account holder)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(totals.selfTransfer).toLocaleString('en-NG')}</span></div>`;
+    if(totals.loanDisbursement>0)
+      html+=`<div class="recycle-row"><span>Loan Disbursements (OKash, EaseMoni, Renmoney, etc.)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(totals.loanDisbursement).toLocaleString('en-NG')}</span></div>`;
     html+=`<div class="recycle-row"><span>Total Deducted from Credits</span><span>\u2212\u20a6${Math.round(totalRecycled).toLocaleString('en-NG')}</span></div>`;
     rows.innerHTML=html;
   }
