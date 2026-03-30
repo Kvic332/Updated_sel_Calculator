@@ -3,32 +3,42 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bank Statement Underwriter - Fixed Logic</title>
+  <title>Bank Statement Underwriter - Fixed + Calculator</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
     body { font-family: system-ui, sans-serif; margin: 20px; background: #f8f9fa; }
-    .container { max-width: 1100px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    .container { max-width: 1100px; margin: 0 auto; background: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 15px rgba(0,0,0,0.1); }
     h1 { color: #1e3a5f; }
-    button { padding: 10px 20px; background: #1e3a5f; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button { padding: 12px 24px; background: #1e3a5f; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; }
     button:hover { background: #2c5a8c; }
-    table, .results { width: 100%; margin-top: 20px; }
-    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-    th { background: #f1f5f9; }
-    .positive { color: #00d4ff; font-weight: bold; }
+    input { padding: 10px; margin-right: 10px; }
+    .results { margin-top: 30px; }
+    .row { 
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center; 
+      border: 1px solid #1e3a5f; 
+      padding: 14px; 
+      border-radius: 6px; 
+      margin-bottom: 12px; 
+      background: #f8fbff;
+    }
+    .positive { color: #00d4ff; font-weight: bold; font-size: 1.05em; }
     .warning { color: #ff9500; }
+    .total { background: #e6f4ea; font-weight: 700; border-color: #10b981; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>✅ Fixed Bank Statement Analyzer (Improved Merge)</h1>
-    <p>Upload GTB, OPay or PalmPay statement PDF</p>
+    <h1>✅ Fixed Bank Statement Analyzer with Calculator</h1>
+    <p>Upload your GTB, OPay or PalmPay PDF statement</p>
 
     <input type="file" id="file-input" accept=".pdf" />
-    <input type="password" id="pdf-password" placeholder="PDF Password (if any)" style="margin-left:10px; padding:8px;" />
+    <input type="password" id="pdf-password" placeholder="PDF Password (if protected)" />
     <button onclick="extractBankStatement()">Analyze Statement</button>
 
-    <div id="pdf-preview" style="display:none; margin-top:30px;">
-      <h2>Underwriting Results</h2>
+    <div id="pdf-preview" class="results" style="display:none;">
+      <h2>Underwriting Summary</h2>
       <div id="pdf-preview-rows"></div>
     </div>
   </div>
@@ -51,10 +61,11 @@
         const y = String(d.getFullYear()).slice(2);
         return `${m} ${y}`;
       }
-      // Fallback for "01 Jan 2025" or similar
-      const match = dateStr.match(/(\d{1,2})\s*(\w{3})\s*(\d{4})/);
+      // Fallback for "01 Jan 2025", "29/01/2025", etc.
+      const match = dateStr.match(/(\d{1,2})\s*(\w{3})\s*(\d{4})/) || 
+                    dateStr.match(/\d{1,2}[-/]\d{1,2}[-/]\d{2,4}/);
       if (match) {
-        return `${match[2]} ${String(match[3]).slice(2)}`;
+        return match[2] ? `${match[2]} ${String(match[3] || '').slice(2)}` : "Unknown";
       }
       return "Unknown";
     }
@@ -72,23 +83,25 @@
       }
     }
 
-    // ====================== CLASSIFICATION ENGINE (Improved) ======================
+    // ====================== CLASSIFICATION ENGINE (Merged & Improved) ======================
     function classify(desc) {
       if (!desc) return "real";
       const d = desc.toLowerCase();
 
-      if (d.includes("owealth") || d.includes("piggyvest") || d.includes("cowrywise")) 
+      if (d.includes("owealth") || d.includes("piggyvest") || d.includes("cowrywise") || d.includes("risevest"))
         return "owealth";
 
       if ((d.includes("transfer from") || d.includes("from ")) && 
-          (d.includes("raheem") || d.includes("ibrahim") || d.includes("same name") || d.match(/gtb.*opay|opay.*gtb/))) 
+          (d.includes("raheem") || d.includes("ibrahim") || d.includes("same name") || 
+           d.match(/gtb.*opay|opay.*gtb/i)))
         return "self";
 
-      if (d.includes("loan") || d.includes("easemoni") || d.includes("carbon") || d.includes("fairmoney")) 
+      if (d.includes("loan") || d.includes("easemoni") || d.includes("carbon") || 
+          d.includes("fairmoney") || d.includes("branch"))
         return "loan";
 
       if (d.includes("sporty") || d.includes("bet") || d.includes("opay payment gateway") || 
-          d.includes("bet9ja") || d.includes("nairabet")) 
+          d.includes("bet9ja") || d.includes("nairabet") || d.includes("betking"))
         return "recycle";
 
       return "real";
@@ -110,54 +123,86 @@
       else monthlyData[key].real += credit;
     }
 
-    // ====================== NET CALCULATION ======================
+    // ====================== NET CALCULATION (Restored) ======================
     function computeNet(m) {
-      return Math.max(m.gross - m.owealth - m.self - m.loan - m.recycle, 0);
+      return Math.max(
+        m.gross - m.owealth - m.self - m.loan - m.recycle,
+        0
+      );
     }
 
-    // ====================== TEXT BLOCK PARSER (Your improved version + enhancements) ======================
+    // ====================== CALCULATOR FUNCTION (Restored & Enhanced) ======================
+    function calculateSummary() {
+      let totalGross = 0;
+      let totalOwealth = 0;
+      let totalSelf = 0;
+      let totalLoan = 0;
+      let totalRecycle = 0;
+      let totalReal = 0;
+
+      Object.values(monthlyData).forEach(m => {
+        totalGross += m.gross;
+        totalOwealth += m.owealth;
+        totalSelf += m.self;
+        totalLoan += m.loan;
+        totalRecycle += m.recycle;
+        totalReal += m.real;
+      });
+
+      const totalNet = Math.max(totalGross - totalOwealth - totalSelf - totalLoan - totalRecycle, 0);
+
+      return {
+        totalGross,
+        totalOwealth,
+        totalSelf,
+        totalLoan,
+        totalRecycle,
+        totalReal,
+        totalNet,
+        monthsAnalyzed: Object.keys(monthlyData).length
+      };
+    }
+
+    // ====================== TEXT PARSER (Improved for PalmPay + GTB) ======================
     function processTextBlock(text) {
-      // Split by common date patterns (your original + more robust fallback)
-      const blocks = text.split(/(?=\d{2} \w{3} \d{4}|\d{2}[-/]\d{2}[-/]\d{2,4})/);
+      const blocks = text.split(/(?=\d{2} \w{3} \d{4}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})/);
 
       blocks.forEach(block => {
         try {
-          // Extract date
-          let dateMatch = block.match(/\d{2} \w{3} \d{4}/) || 
-                         block.match(/\d{1,2}[-/]\d{1,2}[-/]\d{2,4}/);
+          const dateMatch = block.match(/\d{2} \w{3} \d{4}/) || 
+                           block.match(/\d{1,2}[-/]\d{1,2}[-/]\d{2,4}/);
           if (!dateMatch) return;
+
           const date = dateMatch[0];
 
-          // Extract credit amount (handles "-- 29,000.00" and normal credits)
+          // Handles "-- 29,000.00" and normal credit amounts
           const creditMatch = block.match(/--\s*([\d,]+\.\d{2})/) || 
-                             block.match(/([\d,]+\.\d{2})\s*(?:cr|credit|$)/i);
-          if (!creditMatch) return;
+                             block.match(/([\d,]+\.\d{2})(?:\s*(?:cr|credit))?/i);
 
-          const amount = cleanAmount(creditMatch[1]);
-          if (amount > 0) {
-            processTransaction(date, block, amount);
+          if (creditMatch) {
+            const amount = cleanAmount(creditMatch[1]);
+            if (amount > 0) {
+              processTransaction(date, block, amount);
+            }
           }
         } catch (e) {
-          console.warn("Skipped block:", e);
+          console.warn("Parse skip:", e);
         }
       });
     }
 
-    // ====================== FULL PDF PARSER ======================
+    // ====================== PDF PARSER ======================
     async function parsePDF(file, password = "") {
-      monthlyData = {}; // Reset
+      monthlyData = {}; // Reset data
 
       const reader = new FileReader();
       reader.onload = async function (e) {
         const typedarray = new Uint8Array(e.target.result);
-        
-        const loadingTask = pdfjsLib.getDocument({
-          data: typedarray,
-          password: password || undefined
-        });
+        const pdf = await pdfjsLib.getDocument({ 
+          data: typedarray, 
+          password: password || undefined 
+        }).promise;
 
-        const pdf = await loadingTask.promise;
-        
         for (let p = 1; p <= pdf.numPages; p++) {
           const page = await pdf.getPage(p);
           const content = await page.getTextContent();
@@ -170,7 +215,7 @@
       reader.readAsArrayBuffer(file);
     }
 
-    // ====================== RENDER RESULTS (Clean & Clear) ======================
+    // ====================== RENDER RESULTS ======================
     function formatNaira(x) {
       return "₦" + Math.round(x).toLocaleString("en-NG");
     }
@@ -179,30 +224,38 @@
       const container = document.getElementById("pdf-preview-rows");
       container.innerHTML = "";
 
-      const months = Object.keys(monthlyData).sort((a, b) => {
-        // Simple sort for "Jan 25", "Feb 25" etc.
-        return a.localeCompare(b);
-      });
+      const months = Object.keys(monthlyData).sort((a, b) => a.localeCompare(b));
 
       months.forEach(m => {
         const d = monthlyData[m];
         const net = computeNet(d);
 
         const row = document.createElement("div");
-        row.style.marginBottom = "12px";
+        row.className = "row";
         row.innerHTML = `
-          <div style="display:flex; justify-content:space-between; align-items:center; 
-                      border:1px solid #1e3a5f; padding:14px; border-radius:6px; background:#f8fbff;">
-            <div style="font-weight:600; min-width:80px;">${m}</div>
-            <div>${formatNaira(d.gross)}</div>
-            <div class="warning">${formatNaira(d.owealth + d.recycle)}</div>
-            <div style="color:#ffd700">${formatNaira(d.self)}</div>
-            <div style="color:#ff6b35">${formatNaira(d.loan)}</div>
-            <div class="positive">${formatNaira(net)}</div>
-          </div>
+          <div style="font-weight:600; min-width:90px;">${m}</div>
+          <div>${formatNaira(d.gross)}</div>
+          <div class="warning">${formatNaira(d.owealth + d.recycle)}</div>
+          <div style="color:#ffd700">${formatNaira(d.self)}</div>
+          <div style="color:#ff6b35">${formatNaira(d.loan)}</div>
+          <div class="positive">${formatNaira(net)}</div>
         `;
         container.appendChild(row);
       });
+
+      // Show overall summary using the calculator function
+      const summary = calculateSummary();
+      const totalRow = document.createElement("div");
+      totalRow.className = "row total";
+      totalRow.innerHTML = `
+        <div style="font-weight:700;">TOTAL (${summary.monthsAnalyzed} months)</div>
+        <div>${formatNaira(summary.totalGross)}</div>
+        <div class="warning">${formatNaira(summary.totalOwealth + summary.totalRecycle)}</div>
+        <div style="color:#ffd700">${formatNaira(summary.totalSelf)}</div>
+        <div style="color:#ff6b35">${formatNaira(summary.totalLoan)}</div>
+        <div class="positive">${formatNaira(summary.totalNet)}</div>
+      `;
+      container.appendChild(totalRow);
 
       document.getElementById("pdf-preview").style.display = "block";
     }
@@ -221,7 +274,7 @@
       parsePDF(file, password);
     }
 
-    // Auto trigger when file is selected
+    // Auto-analyze when file is selected
     document.getElementById("file-input").addEventListener("change", () => {
       if (document.getElementById("file-input").files.length > 0) {
         extractBankStatement();
