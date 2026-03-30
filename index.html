@@ -8,18 +8,18 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
-:root{--bg:#0a0f1e;--surface:#111827;--surface2:#1a2235;--border:#1e3a5f;--accent:#00d4ff;--accent2:#ff6b35;--green:#00e676;--red:#ff4444;--text:#e2e8f0;--muted:#64748b;--gold:#ffd700}
+:root{--bg:#0a0f1e;--surface:#111827;--surface2:#1a2235;--border:#1e3a5f;--accent:#00d4ff;--accent2:#ff6b35;--green:#00e676;--red:#ff4444;--text:#e2e8f0;--muted:#64748b;--gold:#ffd700;--orange:#ff9500}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);font-family:'Space Mono',monospace;min-height:100vh;overflow-x:hidden}
 body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,212,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,255,.03) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0}
-.wrapper{position:relative;z-index:1;max-width:900px;margin:0 auto;padding:40px 24px 80px}
+.wrapper{position:relative;z-index:1;max-width:960px;margin:0 auto;padding:40px 24px 80px}
 header{margin-bottom:48px;border-bottom:1px solid var(--border);padding-bottom:24px}
 .logo-tag{font-size:10px;letter-spacing:4px;color:var(--accent);text-transform:uppercase;margin-bottom:12px}
 h1{font-family:'DM Serif Display',serif;font-size:clamp(28px,5vw,48px);line-height:1.1;color:#fff}
 h1 em{color:var(--accent);font-style:italic}
 .subtitle{font-size:12px;color:var(--muted);margin-top:8px;letter-spacing:.5px}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-@media(max-width:600px){.grid-2{grid-template-columns:1fr}}
+@media(max-width:620px){.grid-2{grid-template-columns:1fr}}
 .section{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:28px;margin-bottom:24px;position:relative}
 .section-title{font-size:11px;letter-spacing:3px;color:var(--accent);text-transform:uppercase;margin-bottom:20px;padding-bottom:12px;border-bottom:1px solid var(--border)}
 .section-title span{color:var(--muted);margin-left:8px;font-size:10px}
@@ -50,16 +50,32 @@ select option{background:var(--surface2)}
 .drop-label{font-size:12px;color:var(--text);margin-bottom:4px}
 .drop-sub{font-size:11px;color:var(--muted)}
 #file-input{position:absolute;inset:0;opacity:0;cursor:pointer}
-.pdf-status{display:none;padding:12px 16px;border-radius:3px;font-size:12px;margin-top:12px}
+.status-box{display:none;padding:12px 16px;border-radius:3px;font-size:12px;margin-top:12px}
 .pdf-preview{display:none;margin-top:16px}
-.pdf-preview-row{display:grid;grid-template-columns:80px 1fr 130px;gap:8px;align-items:center;background:var(--surface2);padding:8px 12px;border-radius:3px;border:1px solid var(--border);margin-bottom:6px}
-.month-row{display:grid;grid-template-columns:80px 1fr 100px;gap:12px;align-items:center;margin-bottom:10px}
-.month-label{font-size:11px;color:var(--muted)}
+
+/* Inflow table */
+.inflow-table{width:100%;border-collapse:collapse;margin-top:8px}
+.inflow-table th{font-size:9px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)}
+.inflow-table td{padding:6px 8px;border-bottom:1px solid rgba(30,58,95,.4);vertical-align:middle}
+.inflow-table input{padding:6px 8px;font-size:12px}
+.recycle-cell{font-size:11px;color:var(--orange)}
+.net-cell{font-size:12px;color:var(--green);font-weight:700}
+
+/* Recycle breakdown panel */
+.recycle-panel{background:rgba(255,149,0,.05);border:1px solid rgba(255,149,0,.25);border-radius:3px;padding:16px;margin-top:12px;display:none}
+.recycle-title{font-size:10px;letter-spacing:2px;color:var(--orange);text-transform:uppercase;margin-bottom:10px}
+.recycle-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,149,0,.1);font-size:11px}
+.recycle-row:last-child{border-bottom:none;font-weight:700;color:var(--accent)}
+
+/* Requested section */
 .req-card{background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:16px;margin-top:12px}
 .req-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px}
 .req-row:last-child{border-bottom:none}
 .spinner{width:14px;height:14px;border:2px solid rgba(0,212,255,.3);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;display:none}
 @keyframes spin{to{transform:rotate(360deg)}}
+.tag{display:inline-block;font-size:9px;padding:2px 6px;border-radius:2px;margin-left:6px;vertical-align:middle}
+.tag-warn{background:rgba(255,149,0,.15);color:var(--orange);border:1px solid rgba(255,149,0,.3)}
+.tag-info{background:rgba(0,212,255,.1);color:var(--accent);border:1px solid rgba(0,212,255,.2)}
 </style>
 </head>
 <body>
@@ -67,12 +83,13 @@ select option{background:var(--surface2)}
   <header>
     <div class="logo-tag">&#9654; SEL Financial Toolkit</div>
     <h1>Loan <em>Eligibility</em><br>Calculator</h1>
-    <div class="subtitle">Based on SEL Calculator — All Products &nbsp;|&nbsp; Auto-computes DTI, Repayment, Applicable Turnover &amp; Loan Amount</div>
+    <div class="subtitle">All Products &nbsp;|&nbsp; Auto-computes DTI, Repayment, Turnover &amp; Loan Amount &nbsp;|&nbsp; Recycling Detection</div>
   </header>
 
+  <!-- 00: Upload -->
   <div class="section">
-    <div class="section-title">00 — Bank Statement Auto-Fill <span>— Optional</span></div>
-    <p style="font-size:12px;color:var(--muted);margin-bottom:20px">Upload a PDF or Excel (Mono) bank statement to automatically extract and fill monthly credit totals.</p>
+    <div class="section-title">00 &#8212; Bank Statement Auto-Fill <span>&#8212; Optional</span></div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:20px">Upload PDF or Mono Excel. Credits are automatically classified into real income vs recycled amounts.</p>
     <div class="grid-2">
       <div>
         <label>Upload Bank Statement (PDF or XLSX)</label>
@@ -80,7 +97,7 @@ select option{background:var(--surface2)}
           <input type="file" id="file-input" accept=".pdf,.xlsx,.xls" onchange="handleFileSelect(event)">
           <div class="drop-icon" id="drop-icon">&#8679;</div>
           <div class="drop-label" id="drop-label">Drop PDF or XLSX here or click to browse</div>
-          <div class="drop-sub" id="drop-sub">PDF (password-protected OK) &bull; Mono Excel exports</div>
+          <div class="drop-sub" id="drop-sub">PDF (password-protected OK) &#8226; Mono Excel exports</div>
         </div>
       </div>
       <div>
@@ -91,30 +108,43 @@ select option{background:var(--surface2)}
         </div>
         <button class="btn" onclick="extractBankStatement()">
           <span class="spinner" id="extract-spinner"></span>
-          <span id="extract-btn-text">&#8857;&nbsp;&nbsp;Extract Monthly Credits</span>
+          <span id="extract-btn-text">Extract Monthly Credits</span>
         </button>
       </div>
     </div>
-    <div class="pdf-status" id="pdf-status"></div>
+    <div class="status-box" id="pdf-status"></div>
     <div class="pdf-preview" id="pdf-preview">
       <div style="font-size:10px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:10px">Extracted Monthly Credits</div>
       <div id="pdf-preview-rows"></div>
     </div>
   </div>
 
+  <!-- 01: Monthly Inflows with recycle breakdown -->
   <div class="section">
-    <div class="section-title">01 — Monthly Inflows (Last 6 Months)</div>
-    <p style="font-size:12px;color:var(--muted);margin-bottom:20px">Enter the credit amount and number of credits for each of the last 6 months.</p>
-    <div style="display:grid;grid-template-columns:80px 1fr 100px;gap:12px;align-items:center;margin-bottom:8px">
-      <span style="font-size:10px;color:var(--muted);letter-spacing:1px">MONTH</span>
-      <span style="font-size:10px;color:var(--muted);letter-spacing:1px">CREDIT AMOUNT (&#8358;)</span>
-      <span style="font-size:10px;color:var(--muted);letter-spacing:1px">CREDITS</span>
+    <div class="section-title">01 &#8212; Monthly Inflows (Last 6 Months)</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:16px">Gross credits, recycling deductions, and net inflows per month. Net values are used in eligibility calculation.</p>
+    <table class="inflow-table">
+      <thead>
+        <tr>
+          <th style="width:70px">Month</th>
+          <th>Gross Credit (&#8358;)</th>
+          <th style="width:140px">Internal/Recycled (&#8358;)</th>
+          <th style="width:130px">Net Credit (&#8358;)</th>
+          <th style="width:80px">Count</th>
+        </tr>
+      </thead>
+      <tbody id="inflow-rows"></tbody>
+    </table>
+    <!-- Recycle breakdown panel -->
+    <div class="recycle-panel" id="recycle-panel">
+      <div class="recycle-title">&#9888; Recycling / Non-Income Credit Breakdown</div>
+      <div id="recycle-rows"></div>
     </div>
-    <div id="inflow-rows"></div>
   </div>
 
+  <!-- 02: Parameters -->
   <div class="section">
-    <div class="section-title">02 — Loan Parameters</div>
+    <div class="section-title">02 &#8212; Loan Parameters</div>
     <div class="grid-2">
       <div class="field">
         <label>Location</label>
@@ -146,7 +176,7 @@ select option{background:var(--surface2)}
       </div>
     </div>
     <div class="field">
-      <label>Requested Loan Amount (&#8358;) — Optional</label>
+      <label>Requested Loan Amount (&#8358;) &#8212; Optional</label>
       <input type="number" id="requested-loan" placeholder="e.g. 3000000">
     </div>
     <button class="btn btn-primary" onclick="runCalculation()" style="margin-top:8px">
@@ -155,8 +185,9 @@ select option{background:var(--surface2)}
     </button>
   </div>
 
+  <!-- 03: Results -->
   <div class="section results" id="results-section">
-    <div class="section-title">03 — Results</div>
+    <div class="section-title">03 &#8212; Results</div>
     <div class="decision-banner" id="decision-banner"></div>
     <div class="result-grid">
       <div class="result-card highlight">
@@ -168,7 +199,7 @@ select option{background:var(--surface2)}
         <div class="result-value green" id="r-turnover"></div>
       </div>
       <div class="result-card">
-        <div class="result-label">Total Turnover</div>
+        <div class="result-label">Total Turnover (Net)</div>
         <div class="result-value green" id="r-total"></div>
       </div>
       <div class="result-card">
@@ -207,30 +238,41 @@ select option{background:var(--surface2)}
 </div>
 
 <script>
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const MONTH_ABBR={1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'};
+const MONTH_MAP={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
 
-const MONTH_ABBR = {1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'};
-const MONTH_MAP  = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+// ─── Global recycling data store ────────────────────────────────────────────
+// Stores per-month recycling breakdown for display
+let recycleData = {}; // ym -> {selfTransfer, loanDisbursement, internalMove, other, total}
 
+// ─── Inflow Rows Builder ─────────────────────────────────────────────────────
 (function buildInflowRows(){
-  const now = new Date();
-  const rows = document.getElementById('inflow-rows');
+  const now=new Date(),tbody=document.getElementById('inflow-rows');
   for(let i=1;i<=6;i++){
-    const d = new Date(now.getFullYear(), now.getMonth()-6+i, 1);
-    const lbl = MONTH_ABBR[d.getMonth()+1]+' '+String(d.getFullYear()).slice(2);
-    rows.innerHTML += '<div class="month-row">'
-      +'<span class="month-label" id="lbl-'+i+'">'+lbl+'</span>'
-      +'<input type="number" id="inflow-'+i+'" placeholder="e.g. 5,000,000" min="0">'
-      +'<input type="number" id="count-'+i+'" value="12" min="1" max="60">'
-      +'</div>';
+    const d=new Date(now.getFullYear(),now.getMonth()-6+i,1);
+    const lbl=MONTH_ABBR[d.getMonth()+1]+' '+String(d.getFullYear()).slice(2);
+    tbody.innerHTML+=`<tr>
+      <td><span class="month-label" id="lbl-${i}" style="font-size:11px;color:var(--muted)">${lbl}</span></td>
+      <td><input type="number" id="inflow-${i}" placeholder="0" min="0" oninput="updateRecycleRow(${i})"></td>
+      <td><input type="number" id="recycle-${i}" placeholder="0" min="0" style="color:var(--orange);border-color:rgba(255,149,0,.3)" oninput="updateRecycleRow(${i})"></td>
+      <td><span id="net-${i}" class="net-cell">-</span></td>
+      <td><input type="number" id="count-${i}" value="12" min="1" max="60" style="width:60px"></td>
+    </tr>`;
   }
 })();
 
-// ── Calculator Logic ──────────────────────────────────────────────────────────
-function getInterestRate(a,location,productType){
-  if(productType==='NTB'){
-    if(location==='Lagos'){
+function updateRecycleRow(i){
+  const gross=parseFloat(document.getElementById('inflow-'+i).value)||0;
+  const recycle=parseFloat(document.getElementById('recycle-'+i).value)||0;
+  const net=Math.max(gross-recycle,0);
+  document.getElementById('net-'+i).textContent=net>0?'\u20a6'+Math.round(net).toLocaleString('en-NG'):'-';
+}
+
+// ─── Calculator Logic ────────────────────────────────────────────────────────
+function getInterestRate(a,loc,pt){
+  if(pt==='NTB'){
+    if(loc==='Lagos'){
       if(a>100000&&a<=199000)return 0.3561;if(a>=200000&&a<=919999)return 0.1885;
       if(a>=920000&&a<=1199999)return 0.1664;if(a>=1200000)return 0.1376;
     }else{
@@ -238,22 +280,20 @@ function getInterestRate(a,location,productType){
       if(a>=300000&&a<=749000)return 0.2079;if(a>=750000&&a<=919999)return 0.1854;
       if(a>=920000&&a<=1199999)return 0.1638;if(a>=1200000)return 0.1376;
     }
-  }else{
-    const isTopUp=productType==='TOP-UP';
-    if(location==='Lagos'){
-      if(a>100000&&a<=199000)return isTopUp?0.3561:0.213;if(a>=200000&&a<=919999)return isTopUp?0.1885:0.1434;
-      if(a>=920000&&a<=1199999)return isTopUp?0.1664:0.1269;if(a>=1200000)return isTopUp?0.1376:0.1077;
+  }else{const iT=pt==='TOP-UP';
+    if(loc==='Lagos'){
+      if(a>100000&&a<=199000)return iT?0.3561:0.213;if(a>=200000&&a<=919999)return iT?0.1885:0.1434;
+      if(a>=920000&&a<=1199999)return iT?0.1664:0.1269;if(a>=1200000)return iT?0.1376:0.1077;
     }else{
-      if(a>100000&&a<=199000)return isTopUp?0.413:0.213;if(a>=200000&&a<=299000)return isTopUp?0.231:0.1434;
-      if(a>=300000&&a<=749000)return isTopUp?0.2079:0.1434;if(a>=750000&&a<=919999)return isTopUp?0.1854:0.1434;
-      if(a>=920000&&a<=1199999)return isTopUp?0.1638:0.1269;if(a>=1200000)return isTopUp?0.1376:0.1077;
+      if(a>100000&&a<=199000)return iT?0.413:0.213;if(a>=200000&&a<=299000)return iT?0.231:0.1434;
+      if(a>=300000&&a<=749000)return iT?0.2079:0.1434;if(a>=750000&&a<=919999)return iT?0.1854:0.1434;
+      if(a>=920000&&a<=1199999)return iT?0.1638:0.1269;if(a>=1200000)return iT?0.1376:0.1077;
     }
-  }
-  return null;
+  }return null;
 }
-function getRateFromMaxRep(a,location,productType){
-  if(productType==='NTB'){
-    if(location==='Lagos'){
+function getRateFromMaxRep(a,loc,pt){
+  if(pt==='NTB'){
+    if(loc==='Lagos'){
       if(a>100000&&a<=199000)return 0.396;if(a>=200000&&a<=299000)return 0.222;
       if(a>=300000&&a<=409000)return 0.1998;if(a>=410000&&a<=619000)return 0.2052;
       if(a>=620000&&a<=749000)return 0.1854;if(a>=750000&&a<=919000)return 0.1854;
@@ -264,130 +304,122 @@ function getRateFromMaxRep(a,location,productType){
       if(a>=620000&&a<=749000)return 0.2079;if(a>=750000&&a<=919000)return 0.1854;
       if(a>=920000&&a<=1190000)return 0.1638;if(a>=1220000)return 0.1557;
     }
-  }else{
-    const isTopUp=productType==='TOP-UP';
-    if(location==='Lagos'){
-      if(a>100000&&a<=199000)return isTopUp?0.2683:0.1777;if(a>=200000&&a<=299000)return isTopUp?0.1707:0.1447;
-      if(a>=300000&&a<=409000)return isTopUp?0.1544:0.1306;if(a>=410000&&a<=1190000)return isTopUp?0.1343:0.1132;
-      if(a>=1220000)return isTopUp?0.1343:0.1132;
+  }else{const iT=pt==='TOP-UP';
+    if(loc==='Lagos'){
+      if(a>100000&&a<=199000)return iT?0.2683:0.1777;if(a>=200000&&a<=299000)return iT?0.1707:0.1447;
+      if(a>=300000&&a<=409000)return iT?0.1544:0.1306;if(a>=410000)return iT?0.1343:0.1132;
     }else{
-      if(a>100000&&a<=199000)return isTopUp?0.2683:0.1777;if(a>=200000&&a<=299000)return isTopUp?0.1707:0.1447;
-      if(a>=300000&&a<=409000)return isTopUp?0.1544:0.1306;if(a>=410000&&a<=1190000)return isTopUp?0.1343:0.1132;
-      if(a>=1220000)return isTopUp?0.1343:0.1132;
+      if(a>100000&&a<=199000)return iT?0.2683:0.1777;if(a>=200000&&a<=299000)return iT?0.1707:0.1447;
+      if(a>=300000&&a<=409000)return iT?0.1544:0.1306;if(a>=410000)return iT?0.1343:0.1132;
     }
-  }
-  return null;
+  }return null;
 }
-function getDTI(total,pt){if(pt==='NTB')return 0.08;if(pt==='RENEWAL'||pt==='TOP-UP')return total>=801000?0.1:0.0;return 0.0;}
-function getApplicableTurnover(inflows,pt){
-  const total=inflows.reduce((a,b)=>a+b,0),avg=total/inflows.length;
-  const trimmed=(total-Math.min(...inflows)-Math.max(...inflows))/4;
+function getDTI(tot,pt){if(pt==='NTB')return 0.08;if(pt==='RENEWAL'||pt==='TOP-UP')return tot>=801000?0.1:0.0;return 0.0;}
+function getApplicableTurnover(nets,pt){
+  const tot=nets.reduce((a,b)=>a+b,0),avg=tot/nets.length;
+  const trimmed=(tot-Math.min(...nets)-Math.max(...nets))/4;
   return pt==='NTB'?Math.min(avg,trimmed):avg;
 }
-function pvCalc(rate,nper,pmt){if(rate===0)return pmt*nper;return pmt*(1-Math.pow(1+rate,-nper))/rate;}
+function pvCalc(r,n,p){if(r===0)return p*n;return p*(1-Math.pow(1+r,-n))/r;}
 function roundUp1000(n){return Math.ceil(n/1000)*1000;}
-function fmt(n){return '\u20a6'+Math.round(n).toLocaleString('en-NG');}
+function fmt(n){return'\u20a6'+Math.round(n).toLocaleString('en-NG');}
 function fmtPct(n){return n?(n*100).toFixed(2)+'%':'--';}
 
-function calculate(inflows,counts,location,productType,tenor,otherLoans,requestedLoan){
-  const WEEKS=4.33333,totalTurnover=inflows.reduce((a,b)=>a+b,0);
+function runCalculation(){
+  const nets=[],counts=[];
+  for(let i=1;i<=6;i++){
+    const gross=parseFloat(document.getElementById('inflow-'+i).value)||0;
+    const recycle=parseFloat(document.getElementById('recycle-'+i).value)||0;
+    nets.push(Math.max(gross-recycle,0));
+    counts.push(parseInt(document.getElementById('count-'+i).value)||12);
+  }
+  const loc=document.getElementById('location').value;
+  const pt=document.getElementById('product-type').value;
+  const tenor=parseInt(document.getElementById('tenor').value);
+  const otherLoans=parseFloat(document.getElementById('other-loans').value)||0;
+  const reqLoan=parseFloat(document.getElementById('requested-loan').value)||0;
+
+  const totalNet=nets.reduce((a,b)=>a+b,0);
   const avgCount=counts.reduce((a,b)=>a+b,0)/counts.length;
   const repFreq=avgCount>=12?'Weekly':'Monthly';
-  const appTurnover=getApplicableTurnover(inflows,productType);
-  const dti=getDTI(totalTurnover,productType);
+  const appTurnover=getApplicableTurnover(nets,pt);
+  const dti=getDTI(totalNet,pt);
   const maxRepMonthly=Math.max((appTurnover*dti)-otherLoans,0);
   const maxTotalRep=maxRepMonthly*tenor;
-  const rateForPV=getRateFromMaxRep(maxTotalRep,location,productType);
+  const rateForPV=getRateFromMaxRep(maxTotalRep,loc,pt);
+  const WEEKS=4.33333;
+
   let newLoan=0;
   if(rateForPV&&maxRepMonthly>0){
     const pv=pvCalc(rateForPV,tenor,maxRepMonthly);
-    if(productType==='NTB'){
-      if(location==='Lagos'){if(pv>=100000&&pv<=10000000)newLoan=roundUp1000(pv);else if(pv>10000000)newLoan=10000000;}
+    if(pt==='NTB'){
+      if(loc==='Lagos'){if(pv>=100000&&pv<=10000000)newLoan=roundUp1000(pv);else if(pv>10000000)newLoan=10000000;}
       else{if(pv>=200000&&pv<=7000000)newLoan=roundUp1000(pv);else if(pv>7000000)newLoan=7000000;}
     }else{
-      if(location==='Lagos'){if(pv>=200000&&pv<=10000000)newLoan=roundUp1000(pv);else if(pv>10000000)newLoan=10000000;}
+      if(loc==='Lagos'){if(pv>=200000&&pv<=10000000)newLoan=roundUp1000(pv);else if(pv>10000000)newLoan=10000000;}
       else{if(pv>=500000&&pv<=7000000)newLoan=roundUp1000(pv);else if(pv>7000000)newLoan=7000000;}
     }
   }
-  const intRate=newLoan>0?getInterestRate(newLoan,location,productType):null;
+  const intRate=newLoan>0?getInterestRate(newLoan,loc,pt):null;
   const displayRep=repFreq==='Weekly'?maxRepMonthly/WEEKS:maxRepMonthly;
-  const minLoan=location==='Lagos'?100000:(productType==='NTB'?200000:500000);
-  const maxLoan=location==='Lagos'?10000000:7000000;
+  const minLoan=loc==='Lagos'?100000:(pt==='NTB'?200000:500000);
+  const maxLoan=loc==='Lagos'?10000000:7000000;
   const approved=newLoan>=minLoan&&newLoan<=maxLoan;
   const decision=newLoan<minLoan?'Below product minimum':approved?'Max loan amount':'Invalid Loan Amount';
-  let requested=null;
-  if(requestedLoan&&requestedLoan>0){
-    const reqRateX36=getInterestRate(requestedLoan,location,productType);
-    let reqPmtMonthly=0;
-    if(rateForPV&&rateForPV>0)reqPmtMonthly=requestedLoan*rateForPV/(1-Math.pow(1+rateForPV,-tenor));
-    else if(rateForPV===0)reqPmtMonthly=requestedLoan/tenor;
-    const reqPmtDisplay=repFreq==='Weekly'?reqPmtMonthly/WEEKS:reqPmtMonthly;
-    const reqDTI=appTurnover>0?(reqPmtMonthly+otherLoans)/appTurnover:0;
-    const withinLimit=requestedLoan<=newLoan;
-    requested={amount:requestedLoan,dti:reqDTI,repayment:reqPmtDisplay,interestRate:reqRateX36,
-      vsMax:requestedLoan-newLoan,withinLimit,status:withinLimit?'Below max -- eligible':'Above max -- not eligible'};
-  }
-  return{newLoan,appTurnover,totalTurnover,dti,intRate,repFreq,displayRep,maxTotalRep,decision,approved,rateForPV,requested};
-}
 
-function runCalculation(){
-  const inflows=[],counts=[];
-  for(let i=1;i<=6;i++){
-    inflows.push(parseFloat(document.getElementById('inflow-'+i).value)||0);
-    counts.push(parseInt(document.getElementById('count-'+i).value)||12);
-  }
-  const location=document.getElementById('location').value;
-  const productType=document.getElementById('product-type').value;
-  const tenor=parseInt(document.getElementById('tenor').value);
-  const otherLoans=parseFloat(document.getElementById('other-loans').value)||0;
-  const requestedLoan=parseFloat(document.getElementById('requested-loan').value)||0;
-  const r=calculate(inflows,counts,location,productType,tenor,otherLoans,requestedLoan);
   document.getElementById('results-section').style.display='block';
   document.getElementById('results-section').scrollIntoView({behavior:'smooth'});
   const banner=document.getElementById('decision-banner');
-  banner.className='decision-banner '+(r.approved?'approved':'rejected');
-  banner.textContent=(r.approved?'OK':'X')+' '+r.decision;
-  document.getElementById('r-loan').textContent=fmt(r.newLoan);
-  document.getElementById('r-loan').className='result-value '+(r.approved?'green':'red');
-  document.getElementById('r-turnover').textContent=fmt(r.appTurnover);
-  document.getElementById('r-total').textContent=fmt(r.totalTurnover);
-  document.getElementById('r-dti').textContent=fmtPct(r.dti);
-  document.getElementById('r-rate').textContent=r.intRate?fmtPct(r.intRate):'--';
-  document.getElementById('r-freq').textContent=r.repFreq;
-  document.getElementById('r-rep').textContent=fmt(r.displayRep);
-  document.getElementById('r-totalrep').textContent=fmt(r.maxTotalRep);
+  banner.className='decision-banner '+(approved?'approved':'rejected');
+  banner.textContent=(approved?'\u2705':'\u274C')+' '+decision;
+  document.getElementById('r-loan').textContent=fmt(newLoan);
+  document.getElementById('r-loan').className='result-value '+(approved?'green':'red');
+  document.getElementById('r-turnover').textContent=fmt(appTurnover);
+  document.getElementById('r-total').textContent=fmt(totalNet);
+  document.getElementById('r-dti').textContent=fmtPct(dti);
+  document.getElementById('r-rate').textContent=intRate?fmtPct(intRate):'--';
+  document.getElementById('r-freq').textContent=repFreq;
+  document.getElementById('r-rep').textContent=fmt(displayRep);
+  document.getElementById('r-totalrep').textContent=fmt(maxTotalRep);
+
   const reqSec=document.getElementById('requested-section');
-  if(r.requested){
+  if(reqLoan>0){
     reqSec.style.display='block';
-    document.getElementById('req-amount').textContent=fmt(r.requested.amount);
-    document.getElementById('req-dti').textContent=fmtPct(r.requested.dti);
-    document.getElementById('req-rep').textContent=fmt(r.requested.repayment);
-    document.getElementById('req-rate').textContent=r.requested.interestRate?fmtPct(r.requested.interestRate):'--';
-    document.getElementById('req-vs').textContent=(r.requested.vsMax>=0?'+':'')+fmt(Math.abs(r.requested.vsMax));
-    const statusEl=document.getElementById('req-status');
-    statusEl.textContent=r.requested.status;
-    statusEl.style.color=r.requested.withinLimit?'var(--green)':'var(--red)';
+    let reqPmt=0;
+    if(rateForPV&&rateForPV>0)reqPmt=reqLoan*rateForPV/(1-Math.pow(1+rateForPV,-tenor));
+    else if(rateForPV===0)reqPmt=reqLoan/tenor;
+    const reqPmtD=repFreq==='Weekly'?reqPmt/WEEKS:reqPmt;
+    const reqDTI=appTurnover>0?(reqPmt+otherLoans)/appTurnover:0;
+    const within=reqLoan<=newLoan;
+    document.getElementById('req-amount').textContent=fmt(reqLoan);
+    document.getElementById('req-dti').textContent=fmtPct(reqDTI);
+    document.getElementById('req-rep').textContent=fmt(reqPmtD);
+    document.getElementById('req-rate').textContent=getInterestRate(reqLoan,loc,pt)?fmtPct(getInterestRate(reqLoan,loc,pt)):'--';
+    document.getElementById('req-vs').textContent=(reqLoan-newLoan>=0?'+':'')+fmt(Math.abs(reqLoan-newLoan));
+    const st=document.getElementById('req-status');
+    st.textContent=within?'Below max \u2014 eligible':'Above max \u2014 not eligible';
+    st.style.color=within?'var(--green)':'var(--red)';
   }else{reqSec.style.display='none';}
 }
 
-// ── File Handling ─────────────────────────────────────────────────────────────
+// ─── File Handling ────────────────────────────────────────────────────────────
 let currentFile=null;
 function handleDragOver(e){e.preventDefault();document.getElementById('drop-zone').classList.add('drag-over');}
 function handleDragLeave(){document.getElementById('drop-zone').classList.remove('drag-over');}
 function handleDrop(e){
   e.preventDefault();document.getElementById('drop-zone').classList.remove('drag-over');
   const f=e.dataTransfer.files[0];
-  if(f&&(f.name.toLowerCase().endsWith('.pdf')||f.name.toLowerCase().endsWith('.xlsx')||f.name.toLowerCase().endsWith('.xls')))setFile(f);
+  if(f&&(f.name.toLowerCase().endsWith('.pdf')||f.name.toLowerCase().match(/\.xlsx?$/)))setFile(f);
   else showStatus('Please drop a valid PDF or XLSX file.','error');
 }
 function handleFileSelect(e){const f=e.target.files[0];if(f)setFile(f);}
-function setFile(file){
-  currentFile=file;
-  const isXL=file.name.toLowerCase().match(/\.xlsx?$/);
+function setFile(f){
+  currentFile=f;
+  const isXL=f.name.toLowerCase().match(/\.xlsx?$/);
   document.getElementById('drop-icon').textContent='OK';
   document.getElementById('drop-icon').style.color='var(--green)';
-  document.getElementById('drop-label').innerHTML='<span style="color:var(--green);font-weight:700">'+file.name+'</span>';
-  document.getElementById('drop-sub').textContent=(file.size/1024).toFixed(0)+' KB -- '+(isXL?'Mono Excel':'PDF')+' -- Ready to Extract';
+  document.getElementById('drop-label').innerHTML='<span style="color:var(--green);font-weight:700">'+f.name+'</span>';
+  document.getElementById('drop-sub').textContent=(f.size/1024).toFixed(0)+' KB \u2014 '+(isXL?'Mono Excel':'PDF')+' \u2014 Ready to Extract';
   document.getElementById('drop-zone').style.borderColor='var(--green)';
   hideStatus();
 }
@@ -407,8 +439,7 @@ async function extractBankStatement(){
   document.getElementById('extract-spinner').style.display='block';
   document.getElementById('extract-btn-text').textContent='Extracting...';
   try{
-    const fname=currentFile.name.toLowerCase();
-    if(fname.endsWith('.xlsx')||fname.endsWith('.xls')) await extractExcel(currentFile);
+    if(currentFile.name.toLowerCase().match(/\.xlsx?$/))await extractExcel(currentFile);
     else await extractPDF(currentFile);
   }catch(err){showStatus('Error: '+err.message,'error');console.error(err);}
   finally{
@@ -417,31 +448,74 @@ async function extractBankStatement(){
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+// RECYCLING CLASSIFIER
+// Categories: internalMove | selfTransfer | loanDisbursement | realCredit
+// Applied across ALL bank parsers uniformly.
+// ════════════════════════════════════════════════════════════════════════════
+function classifyCredit(desc, amount, accountHolderName){
+  const d = desc.toLowerCase();
+  const name = (accountHolderName||'').toLowerCase();
+  
+  // 1. Internal wallet moves (OPay OWealth, PalmPay savings, etc.)
+  if(d.includes('owealth withdrawal') || d.includes('owealth deposit') ||
+     d.includes('auto-save') || d.includes('owealth interest') ||
+     d.includes('wallet transfer') || d.includes('savings withdrawal') ||
+     d.includes('own transfer') || d.includes('owealth balance'))
+    return 'internalMove';
+  
+  // 2. Loan disbursements
+  if(d.includes('okash') || d.includes('easemoni') || d.includes('fairmoney') ||
+     d.includes('renmoney') || d.includes('palmcredit') || d.includes('branch ') ||
+     d.includes('carbon ') || d.includes('migo ') || d.includes('lidya ') ||
+     d.includes('zedvance') || d.includes('creditwave') || d.includes('quickcheck') ||
+     d.includes('loan disburs') || d.includes('credit disburs') || d.includes('disbursement'))
+    return 'loanDisbursement';
+  
+  // 3. Self-transfers — same account holder name in narration
+  if(name && name.length > 4) {
+    // Split name into parts and check if 2+ parts appear in description
+    const nameParts = name.split(/\s+/).filter(p=>p.length>3);
+    const matchCount = nameParts.filter(p=>d.includes(p)).length;
+    if(matchCount >= 2) return 'selfTransfer';
+  }
+  // Generic self-transfer patterns
+  if((d.includes('transfer from') && d.includes('olalekan')) ||
+     (d.includes('transfer from') && d.includes('raheem ibrahim')) ||
+     (d.includes('nip transfer') && (d.includes(' own ') || d.includes('self'))))
+    return 'selfTransfer';
+    
+  return 'realCredit';
+}
+
+function addCreditClassified(monthly, ym, amount, desc, accountHolderName){
+  if(!ym||!amount||amount<=0)return;
+  if(!monthly[ym])monthly[ym]={
+    gross:0,count:0,
+    internalMove:0,selfTransfer:0,loanDisbursement:0,realCredit:0,
+    label:ymToLabel(ym)
+  };
+  monthly[ym].gross+=amount;
+  monthly[ym].count++;
+  const cat=classifyCredit(desc,amount,accountHolderName);
+  monthly[ym][cat]+=amount;
+}
+
+function ymToLabel(ym){const[yr,mo]=ym.split('-');return MONTH_ABBR[parseInt(mo)]+' '+yr.slice(2);}
+
+// ════════════════════════════════════════════════════════════════════════════
 // MONO EXCEL PARSER
-// Mono bank statement export (mybankStatement / Renmoney Mono API):
-//   Rows 0-18: metadata  (Status, LoanID, ClientID, Name, …, Period, …)
-//   Row 19:   Header     [Transaction Date | Value Date | Credit | Debit | Balance | Narration]
-//   Row 20+:  Transactions — dates as "YYYY-MM-DD" strings, credit/debit as numbers
-//
-// Strategy: scan for the header row (col-0 = "Transaction Date"), then group
-// credit amounts by YYYY-MM. Works even if metadata row count shifts across
-// Mono API versions.
-// ══════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 async function extractExcel(file){
   const ab=await file.arrayBuffer();
   const wb=XLSX.read(ab,{type:'array',cellDates:true});
   const ws=wb.Sheets[wb.SheetNames[0]];
   const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
-
-  // Find header row
   let hdrIdx=-1;
   for(let i=0;i<Math.min(rows.length,35);i++){
-    const c0=String(rows[i][0]||'').toLowerCase().trim();
-    if(c0==='transaction date'){hdrIdx=i;break;}
+    if(String(rows[i][0]||'').toLowerCase().trim()==='transaction date'){hdrIdx=i;break;}
   }
   if(hdrIdx===-1){
-    // Fallback: any row with both "credit" and "debit" and "date"
     for(let i=0;i<Math.min(rows.length,35);i++){
       const s=rows[i].map(c=>String(c||'').toLowerCase()).join('|');
       if(s.includes('credit')&&s.includes('debit')&&s.includes('date')){hdrIdx=i;break;}
@@ -449,46 +523,49 @@ async function extractExcel(file){
   }
   if(hdrIdx===-1){showStatus('Could not locate transaction header in Excel file.','error');return;}
 
-  // Map column names to indices
+  // Get account holder name from metadata
+  let accountName='';
+  for(let i=0;i<hdrIdx;i++){
+    const c0=String(rows[i][0]||'').toLowerCase();
+    if(c0==='name'){accountName=String(rows[i][1]||'');break;}
+  }
+
   const hdr=rows[hdrIdx].map(c=>String(c||'').toLowerCase().trim());
-  let dateCol=0,creditCol=2; // Mono default positions
+  let dateCol=0,creditCol=2,narrationCol=5;
   for(let c=0;c<hdr.length;c++){
     if(hdr[c]==='transaction date'||(dateCol===0&&hdr[c].includes('date')))dateCol=c;
     if(hdr[c]==='credit'||hdr[c].includes('credit amt'))creditCol=c;
+    if(hdr[c]==='narration'||hdr[c].includes('narrat')||hdr[c].includes('description'))narrationCol=c;
   }
 
   const monthly={};
   for(let i=hdrIdx+1;i<rows.length;i++){
     const row=rows[i];
     if(!row||row.length<3)continue;
-    // Parse date — cellDates:true means dates come as ISO strings "YYYY-MM-DD..."
-    let ym=null;
     const rd=String(row[dateCol]||'').trim();
     const dm=/^(20\d{2})-(\d{2})/.exec(rd);
-    if(dm)ym=dm[1]+'-'+dm[2];
-    if(!ym)continue;
-    // Parse credit
-    const rc=String(row[creditCol]||'').replace(/[,\s]/g,'');
-    const credit=parseFloat(rc)||0;
-    if(credit>0)addCredit(monthly,ym,credit);
+    if(!dm)continue;
+    const ym=dm[1]+'-'+dm[2];
+    const credit=parseFloat(String(row[creditCol]||'').replace(/[,\s]/g,''))||0;
+    if(credit<=0)continue;
+    const narration=String(row[narrationCol]||'');
+    addCreditClassified(monthly,ym,credit,narration,accountName);
   }
 
-  const sorted=Object.entries(monthly)
-    .filter(([,v])=>v.credit>0)
-    .sort(([a],[b])=>a.localeCompare(b))
-    .slice(-6).map(([,v])=>v);
+  const sorted=buildSortedMonths(monthly);
   if(!sorted.length){showStatus('No credit transactions found in Excel statement.','error');return;}
-  fillInflowFields(sorted);
+  fillInflowFields(sorted,accountName||'Mono Excel');
   showStatus('Extracted '+sorted.length+' months from Mono Excel statement','success');
 }
 
-// ── PDF Extraction ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// PDF EXTRACTION DISPATCHER
+// ════════════════════════════════════════════════════════════════════════════
 async function extractPDF(file){
   const password=document.getElementById('pdf-password').value||'';
   try{
     const ab=await file.arrayBuffer();
-    const loadingTask=pdfjsLib.getDocument({data:ab,password});
-    const pdf=await loadingTask.promise;
+    const pdf=await pdfjsLib.getDocument({data:ab,password}).promise;
     const pages=[];
     for(let i=1;i<=pdf.numPages;i++){
       const page=await pdf.getPage(i);
@@ -502,50 +579,34 @@ async function extractPDF(file){
         lineMap.get(y).push({str:item.str,x:item.transform[4]});
       }
       const sortedLines=[...lineMap.entries()].sort((a,b)=>b[0]-a[0])
-        .map(([,items])=>({
-          items:items.sort((a,b)=>a.x-b.x),
-          text:items.sort((a,b)=>a.x-b.x).map(i=>i.str).join(' ')
-        }));
-      let rawText='';
+        .map(([,items])=>({items:items.sort((a,b)=>a.x-b.x),text:items.sort((a,b)=>a.x-b.x).map(i=>i.str).join(' ')}));
+      let raw='';
       for(let k=0;k<tc.items.length;k++){
-        const str=tc.items[k].str;if(!str)continue;
-        if(k===0){rawText+=str;continue;}
-        const prev=tc.items[k-1].str||'';
-        const noSpace=prev.endsWith('\u20a6')||str.startsWith('\u20a6')||
-          (prev.match(/\d$/)&&str.match(/^[.,\d]/))||(prev.match(/[.,]$/)&&str.match(/^\d/));
-        rawText+=(noSpace?'':' ')+str;
+        const s=tc.items[k].str;if(!s)continue;
+        if(k===0){raw+=s;continue;}
+        const p=tc.items[k-1].str||'';
+        const noSp=p.endsWith('\u20a6')||s.startsWith('\u20a6')||(p.match(/\d$/)&&s.match(/^[.,\d]/))||(p.match(/[.,]$/)&&s.match(/^\d/));
+        raw+=(noSp?'':' ')+s;
       }
-      pages.push({rawText,lines:sortedLines,width:vp.width});
+      pages.push({raw,lines:sortedLines,width:vp.width});
     }
-    const fullText=pages.map(p=>p.rawText).join('\n');
+    const fullText=pages.map(p=>p.raw).join('\n');
     const bank=detectBank(fullText);
-    let monthly={};
     const ft=fullText.toLowerCase();
-    if(!Object.keys(monthly).length&&(bank==='Moniepoint'||ft.includes('moniepoint')))
-      monthly=parseMoniepoint(pages);
-    if(!Object.keys(monthly).length&&(bank.includes('Kuda')||ft.includes('kuda')))
-      monthly=parseKudaLayout(pages);
-    if(!Object.keys(monthly).length&&(bank==='PalmPay'||ft.includes('palmpay')))
-      monthly=parsePalmPayLayout(pages);
-    if(!Object.keys(monthly).length&&(bank==='OPay'||ft.includes('opay')||ft.includes('9payment')))
-      monthly=parseOpay(pages.map(p=>p.rawText));
-    if(!Object.keys(monthly).length&&(bank==='Access Bank'||ft.includes('access bank')||bank==='GTBank'||ft.includes('gtbank')))
-      monthly=parseRowTransaction(pages.map(p=>p.rawText));
-    // MBS Summary Table: Sterling, First Bank, Zenith, UBA, Stanbic, FCMB, etc.
-    if(!Object.keys(monthly).length)
-      monthly=parseMBSSummaryTable(fullText);
-    // Legacy fallback
-    if(!Object.keys(monthly).length)
-      monthly=parseSummaryTable(fullText);
-    if(!Object.keys(monthly).length)
-      monthly=parseRowTransaction(pages.map(p=>p.rawText));
+    let monthly={};
 
-    const sorted=Object.entries(monthly)
-      .filter(([,v])=>v.credit>0)
-      .sort(([a],[b])=>a.localeCompare(b))
-      .slice(-6).map(([,v])=>v);
+    if(bank==='Moniepoint'||ft.includes('moniepoint')) monthly=parseMoniepoint(pages,fullText);
+    if(!ok(monthly)&&(bank.includes('Kuda')||ft.includes('kuda'))) monthly=parseKudaLayout(pages);
+    if(!ok(monthly)&&(bank==='PalmPay'||ft.includes('palmpay'))) monthly=parsePalmPay(pages,fullText);
+    if(!ok(monthly)&&(bank==='OPay'||ft.includes('opay')||ft.includes('9payment'))) monthly=parseOpay(pages,fullText);
+    if(!ok(monthly)&&(bank==='Access Bank'||bank==='GTBank')) monthly=parseRowTransaction(pages.map(p=>p.raw));
+    if(!ok(monthly)) monthly=parseMBSSummaryTable(fullText);
+    if(!ok(monthly)) monthly=parseSummaryTable(fullText);
+    if(!ok(monthly)) monthly=parseRowTransaction(pages.map(p=>p.raw));
+
+    const sorted=buildSortedMonths(monthly);
     if(!sorted.length){showStatus('Could not extract monthly credits. Format may not be supported.','error');return;}
-    fillInflowFields(sorted);
+    fillInflowFields(sorted,bank);
     showStatus('Extracted '+sorted.length+' months from '+bank+' statement','success');
   }catch(err){
     if(err.name==='PasswordException')showStatus('Incorrect or missing PDF password.','error');
@@ -553,6 +614,126 @@ async function extractPDF(file){
   }
 }
 
+function ok(m){return Object.keys(m).length>0;}
+
+function buildSortedMonths(monthly){
+  return Object.entries(monthly)
+    .filter(([,v])=>v.gross>0)
+    .sort(([a],[b])=>a.localeCompare(b))
+    .slice(-6)
+    .map(([,v])=>v);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// NEW: OPAY PARSER — multi-line aware, classifies OWealth as internal
+// ════════════════════════════════════════════════════════════════════════════
+function parseOpay(pages, fullText){
+  const monthly={};
+  // Extract account holder name from header
+  const nameM=fullText.match(/Account Name[^\n]*\n([A-Z ]+)/);
+  const accountName=nameM?nameM[1].trim():'';
+
+  // Only parse Wallet Account section (stop at Savings Account)
+  let text=fullText;
+  const savIdx=fullText.search(/Savings Account Period|Savings Account\s*\n.*Period/i);
+  if(savIdx>0)text=fullText.slice(0,savIdx);
+
+  const lines=text.split('\n');
+  let currentYM=null;
+  let pendingDesc='';
+
+  for(let i=0;i<lines.length;i++){
+    const line=lines[i];
+    // Detect date line: DD Mon YYYY HH:MM:SS DD Mon YYYY ...
+    const dm=/^(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})/.exec(line.trim());
+    if(dm){
+      const mo=MONTH_MAP[dm[2].toLowerCase()];
+      currentYM=`${dm[3]}-${String(mo).padStart(2,'0')}`;
+      pendingDesc=line;
+    } else if(currentYM){
+      pendingDesc+=' '+line;
+    }
+
+    if(!currentYM)continue;
+
+    // Look for -- credit pattern in accumulated description
+    // Line with -- AMOUNT format = credit entry
+    const creditMatch=/--\s+([\d,]+\.\d{2})\s/.exec(line)||/--\s+([\d,]+\.\d{2})$/.exec(line);
+    if(creditMatch){
+      const amt=parseFloat(creditMatch[1].replace(/,/g,''));
+      if(amt>0){
+        addCreditClassified(monthly,currentYM,amt,pendingDesc,accountName);
+        pendingDesc='';
+      }
+    }
+  }
+  return monthly;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// NEW: PALMPAY PARSER
+// PalmPay statement format (from screenshot):
+//   Columns: Transaction Date | Transaction Detail | Money In (NGN) | Money Out (NGN) | Transaction ID
+//   Credits: Money In column has +AMOUNT (e.g., +2000.00)
+//   Debits:  Money Out column has -AMOUNT (e.g., -3000.00)
+//   Date format: MM/DD/YYYY HH:MM:SS AM/PM  OR  "03/24/2026 11:40:07 AM"
+//
+// Also handles older PalmPay format (same as Kuda layout with ₦ amounts).
+// ════════════════════════════════════════════════════════════════════════════
+function parsePalmPay(pages, fullText){
+  // First try the new +/- format
+  const monthly=parsePalmPayNewFormat(pages, fullText);
+  if(ok(monthly))return monthly;
+  // Fall back to layout-based parser (older format)
+  return parseKudaLayout(pages);
+}
+
+function parsePalmPayNewFormat(pages, fullText){
+  const monthly={};
+  // Extract account name
+  const nameM=fullText.match(/Name\s*\n?([A-Z ]{4,})/);
+  const accountName=nameM?nameM[1].trim():'';
+
+  const lines=fullText.split('\n');
+  let currentYM=null;
+  let currentDesc='';
+
+  for(let i=0;i<lines.length;i++){
+    const line=lines[i].trim();
+    if(!line)continue;
+
+    // Date pattern: MM/DD/YYYY  (PalmPay uses this format)
+    const dateM=/^(\d{2})\/(\d{2})\/(20\d{2})/.exec(line);
+    if(dateM){
+      const month=parseInt(dateM[1]);
+      const yr=dateM[3];
+      currentYM=`${yr}-${String(month).padStart(2,'0')}`;
+      currentDesc=line;
+      // Look for +AMOUNT on same line
+      const inM=/\+(\d[\d,]*\.\d{2})/.exec(line);
+      if(inM&&currentYM){
+        const amt=parseFloat(inM[1].replace(/,/g,''));
+        if(amt>0)addCreditClassified(monthly,currentYM,amt,line,accountName);
+      }
+      continue;
+    }
+
+    // Continuation line with + amount
+    const inM=/\+([\d,]+\.\d{2})/.exec(line);
+    if(inM&&currentYM){
+      const amt=parseFloat(inM[1].replace(/,/g,''));
+      if(amt>0)addCreditClassified(monthly,currentYM,amt,currentDesc+' '+line,accountName);
+    }
+  }
+
+  // If very few results, try page-by-page with layout
+  if(Object.values(monthly).filter(v=>v.count>2).length===0)return {};
+  return monthly;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// EXISTING PARSERS (updated to use addCreditClassified)
+// ════════════════════════════════════════════════════════════════════════════
 function detectBank(text){
   const t=text.toLowerCase();
   if(t.includes('moniepoint mfb')||t.includes('moniepoint microfinance')||
@@ -580,87 +761,37 @@ function detectBank(text){
   return 'Unknown Bank';
 }
 
-function ymToLabel(ym){const[yr,mo]=ym.split('-');return MONTH_ABBR[parseInt(mo)]+' '+yr.slice(2);}
-function addCredit(monthly,ym,amt){
-  if(!ym||!amt||amt<=0)return;
-  if(!monthly[ym])monthly[ym]={credit:0,count:0,label:ymToLabel(ym),year:parseInt(ym.split('-')[0]),month:MONTH_ABBR[parseInt(ym.split('-')[1])]};
-  monthly[ym].credit+=amt;monthly[ym].count++;
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// MBS SUMMARY TABLE PARSER
-// Handles: Sterling Bank, First Bank, Zenith, UBA, Stanbic, FCMB, Wema, etc.
-// (any bank using the mybankStatement / MBS PDF generation engine)
-//
-// These statements contain a "Transaction Summary" box like:
-//   Year  Month  Total Debit        Total Credit
-//   2026  Jan    29,001,944.00      28,951,054.00
-//   2025  Dec     4,559,789.00       4,610,750.00
-//
-// Root-cause of the old bug: parseSummaryTable tokenises the ENTIRE document
-// and pattern-matches on ANY bare "20XX" token.  Transaction dates like
-// "09/02/2025" tokenise to fragments ("09/02/2025" stays whole if no space
-// splits it, BUT narration strings containing year numbers, account numbers
-// or transaction IDs could produce bare 4-digit tokens that trigger false
-// positives, leading to wrong or partial month data (e.g. only 2 months
-// extracted instead of 6, or stray ₦31 amounts).
-//
-// Fix: use a single anchored regex over the flat text that requires the
-// pattern:   YYYY  MonthName  Amount  Amount
-// where all four groups appear consecutively with only whitespace between them.
-// This is unique to the summary table layout — transaction rows never place a
-// bare year immediately before a month abbreviation.
-// We take group[4] (rightmost amount) as Total Credit.
-// Use SET not addCredit: each ym appears exactly once in the summary.
-// ══════════════════════════════════════════════════════════════════════════════
-function parseMBSSummaryTable(fullText){
+function parseMoniepoint(pages,fullText){
   const monthly={};
-  const flat=fullText.replace(/\r?\n/g,' ').replace(/\s+/g,' ');
-  const re=/(20\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/gi;
-  let m;
-  while((m=re.exec(flat))!==null){
-    const yr=m[1],mon=m[2].toLowerCase().slice(0,3);
-    const credit=parseFloat(m[4].replace(/,/g,''));
-    const mo=MONTH_MAP[mon];
-    if(!mo||credit<=0)continue;
-    const ym=yr+'-'+String(mo).padStart(2,'0');
-    if(!monthly[ym])monthly[ym]={credit:0,count:0,label:ymToLabel(ym),year:parseInt(yr),month:MONTH_ABBR[mo]};
-    monthly[ym].credit=credit; // direct assignment — one row per month in summary
-    monthly[ym].count=0;       // 0 = from summary table, inflow fields use default count
-  }
-  return monthly;
-}
-
-// ── Moniepoint ────────────────────────────────────────────────────────────────
-function parseMoniepoint(pages){
-  const monthly={};let currentYM=null;
+  let currentYM=null;
+  const nameM=fullText.match(/Account\s*Name[:\s]+([A-Z ]{4,})/i);
+  const accountName=nameM?nameM[1].trim():'';
   for(const{lines}of pages){
     for(let i=0;i<lines.length;i++){
       const stripped=lines[i].text.trim();
       const yearOnly=/^(20\d{2})-$/.exec(stripped);
       if(yearOnly){
-        const year=yearOnly[1];
+        const yr=yearOnly[1];
         for(let j=i+1;j<Math.min(i+6,lines.length);j++){
           const mm=/^(\d{2})-/.exec(lines[j].text.trim());
-          if(mm){currentYM=year+'-'+mm[1];break;}
+          if(mm){currentYM=`${yr}-${mm[1]}`;break;}
         }
         continue;
       }
       if(!currentYM)continue;
-      const lineText=lines[i].text;
-      if(lineText.length<80)continue;
-      const nums=[];const numRe=/[\d,]+\.\d{2}/g;let m;
-      while((m=numRe.exec(lineText))!==null)nums.push(parseFloat(m[0].replace(/,/g,'')));
-      let credit=null;
+      const lt=lines[i].text;
+      if(lt.length<80)continue;
+      const nums=[];const nr=/[\d,]+\.\d{2}/g;let m;
+      while((m=nr.exec(lt))!==null)nums.push(parseFloat(m[0].replace(/,/g,'')));
+      let credit=null,desc=lt;
       if(nums.length>=5&&nums[1]===0.0&&nums[2]>0)credit=nums[2];
       else if(nums.length===4&&nums[0]===0.0&&nums[1]>0)credit=nums[1];
-      if(credit)addCredit(monthly,currentYM,credit);
+      if(credit)addCreditClassified(monthly,currentYM,credit,desc,accountName);
     }
   }
   return monthly;
 }
 
-// ── Kuda / PalmPay ────────────────────────────────────────────────────────────
 function parseKudaLayout(pages){
   const monthly={};
   const DATE_RE=/^(\d{2})\/(\d{2})\/(\d{2,4})$/;
@@ -671,48 +802,50 @@ function parseKudaLayout(pages){
     for(const line of lines){
       const txt=line.text.toLowerCase();
       if(txt.includes('money in')&&txt.includes('money out')){
-        const miItem=line.items.find(it=>it.str.toLowerCase().includes('money in'));
-        const moItem=line.items.find(it=>it.str.toLowerCase().includes('money out'));
-        if(miItem&&moItem)moneyInMaxX=(miItem.x+moItem.x)/2;
+        const mi=line.items.find(it=>it.str.toLowerCase().includes('money in'));
+        const mo=line.items.find(it=>it.str.toLowerCase().includes('money out'));
+        if(mi&&mo)moneyInMaxX=(mi.x+mo.x)/2;
         break;
       }
     }
     let currentYM=null;
     for(const line of lines){
       const items=line.items;if(!items.length)continue;
-      const firstStr=items[0].str.trim();
-      const dm=DATE_RE.exec(firstStr);
-      if(dm){const[,day,mon,yr]=dm;const fullYr=yr.length===4?yr:'20'+yr;currentYM=fullYr+'-'+mon.padStart(2,'0');}
+      const dm=DATE_RE.exec(items[0].str.trim());
+      if(dm){const[,d,mon,yr]=dm;const fy=yr.length===4?yr:'20'+yr;currentYM=`${fy}-${mon.padStart(2,'0')}`;}
       if(!currentYM)continue;
-      const lineLow=line.text.toLowerCase();
-      if(CBN_SKIP.some(s=>lineLow.includes(s)))continue;
+      if(CBN_SKIP.some(s=>line.text.toLowerCase().includes(s)))continue;
       for(const item of items){
         const am=AMT_RE.exec(item.str.trim());
-        if(am&&item.x<moneyInMaxX){const amt=parseFloat(am[1].replace(/,/g,''));if(amt>0)addCredit(monthly,currentYM,amt);}
+        if(am&&item.x<moneyInMaxX){
+          const amt=parseFloat(am[1].replace(/,/g,''));
+          if(amt>0)addCreditClassified(monthly,currentYM,amt,line.text,'');
+        }
       }
     }
   }
   return monthly;
 }
-function parsePalmPayLayout(pages){return parseKudaLayout(pages);}
 
-// ── OPay ─────────────────────────────────────────────────────────────────────
-function parseOpay(rawPages){
+function parseMBSSummaryTable(fullText){
   const monthly={};
-  const ML={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
-  for(const text of rawPages){
-    const re=/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})\s+\d{2}:\d{2}:\d{2}\s+\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+20\d{2}\s+((?:(?!\d+\.\d{2}).)*?)--\s+([\d,]+\.\d{2})/gi;
-    let m;
-    while((m=re.exec(text))!==null){
-      const[,day,mon,yr,,amt]=m;const mo=ML[mon.toLowerCase().slice(0,3)];if(!mo)continue;
-      const ym=yr+'-'+String(mo).padStart(2,'0');
-      const v=parseFloat(amt.replace(/,/g,''));if(v>0)addCredit(monthly,ym,v);
-    }
+  const flat=fullText.replace(/\r?\n/g,' ').replace(/\s+/g,' ');
+  const re=/(20\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/gi;
+  let m;
+  while((m=re.exec(flat))!==null){
+    const yr=m[1],mon=m[2].toLowerCase().slice(0,3);
+    const credit=parseFloat(m[4].replace(/,/g,''));
+    const mo=MONTH_MAP[mon];
+    if(!mo||credit<=0)continue;
+    const ym=`${yr}-${String(mo).padStart(2,'0')}`;
+    if(!monthly[ym])monthly[ym]={gross:0,count:0,internalMove:0,selfTransfer:0,loanDisbursement:0,realCredit:0,label:ymToLabel(ym)};
+    monthly[ym].gross=credit;
+    monthly[ym].realCredit=credit;
+    monthly[ym].count=0;
   }
   return monthly;
 }
 
-// ── Legacy summary table (fallback) ──────────────────────────────────────────
 function parseSummaryTable(fullText){
   const monthly={};
   const tokens=fullText.replace(/\n/g,' ').replace(/\s+/g,' ').split(' ');
@@ -720,56 +853,93 @@ function parseSummaryTable(fullText){
     if(!/^20\d{2}$/.test(tokens[i]))continue;
     const monKey=(tokens[i+1]||'').toLowerCase().slice(0,3);
     if(!MONTH_MAP[monKey])continue;
-    const yr=tokens[i],mo=MONTH_MAP[monKey],ym=yr+'-'+String(mo).padStart(2,'0');
+    const ym=`${tokens[i]}-${String(MONTH_MAP[monKey]).padStart(2,'0')}`;
     if(monthly[ym])continue;
     for(let j=i+2;j<i+14&&j<tokens.length-1;j++){
       const n1=parseFloat((tokens[j]||'').replace(/,/g,''));
       const n2=parseFloat((tokens[j+1]||'').replace(/,/g,''));
-      if(!isNaN(n1)&&!isNaN(n2)&&n2>=0){addCredit(monthly,ym,n2);break;}
+      if(!isNaN(n1)&&!isNaN(n2)&&n2>=0){
+        if(!monthly[ym])monthly[ym]={gross:0,count:0,internalMove:0,selfTransfer:0,loanDisbursement:0,realCredit:0,label:ymToLabel(ym)};
+        monthly[ym].gross=n2;monthly[ym].realCredit=n2;
+        break;
+      }
     }
   }
   return monthly;
 }
 
-// ── Row Transaction (Access Bank, GTB) ───────────────────────────────────────
 function parseRowTransaction(rawPages){
   const monthly={};
   const ML={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
   for(const text of rawPages){
-    const ap=/(\d{2})-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-(\d{2})\s+\d{2}-(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-\d{2}\s+((?:(?!\d[\d,]*\.\d{2}).)*?)-\s+([\d,]+\.\d{2})/gi;
+    const ap=/(\d{2})-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-(\d{2})\s+((?:(?!\d[\d,]*\.\d{2}).)*?)-\s+([\d,]+\.\d{2})/gi;
     let m;
     while((m=ap.exec(text))!==null){
-      const[,day,mon,yr,,amt]=m;const mo=ML[mon.toLowerCase().slice(0,3)];if(!mo)continue;
+      const[,d,mon,yr,desc,amt]=m;const mo=ML[mon.toLowerCase().slice(0,3)];if(!mo)continue;
       const ym='20'+yr+'-'+String(mo).padStart(2,'0');
-      const v=parseFloat(amt.replace(/,/g,''));if(v>0)addCredit(monthly,ym,v);
+      addCreditClassified(monthly,ym,parseFloat(amt.replace(/,/g,'')),desc,'');
     }
-    const gp=/(\d{2})\/(\d{2})\/(20\d{2})\s+(?:\d{2}\/\d{2}\/20\d{2}\s+)?((?:(?!\d[\d,]*\.\d{2}).)*?)(?:\d[\d,]*\.\d{2}\s+)?-\s+([\d,]+\.\d{2})/g;
+    const gp=/(\d{2})\/(\d{2})\/(20\d{2})\s+((?:(?!\d[\d,]*\.\d{2}).)*?)(?:\d[\d,]*\.\d{2}\s+)?-\s+([\d,]+\.\d{2})/g;
     while((m=gp.exec(text))!==null){
-      const[,day,mon,yr,,amt]=m;const ym=yr+'-'+String(parseInt(mon)).padStart(2,'0');
-      const v=parseFloat(amt.replace(/,/g,''));if(v>0)addCredit(monthly,ym,v);
+      const[,d,mon,yr,desc,amt]=m;const ym=`${yr}-${String(parseInt(mon)).padStart(2,'0')}`;
+      addCreditClassified(monthly,ym,parseFloat(amt.replace(/,/g,'')),desc,'');
     }
   }
   return monthly;
 }
 
-function fillInflowFields(data){
+// ════════════════════════════════════════════════════════════════════════════
+// FILL INFLOW FIELDS + RECYCLING PANEL
+// ════════════════════════════════════════════════════════════════════════════
+function fillInflowFields(data, bankName){
+  // Preview rows
   const previewRows=document.getElementById('pdf-preview-rows');
   previewRows.innerHTML='';
   data.forEach((v,idx)=>{
+    const recycled=v.internalMove+v.selfTransfer+v.loanDisbursement;
+    const net=Math.max(v.gross-recycled,0);
     previewRows.innerHTML+=
-      '<div class="pdf-preview-row">'
-      +'<span style="font-size:11px;color:var(--accent)">Month '+(idx+1)+'</span>'
-      +'<span style="font-size:12px">'+v.label+'</span>'
-      +'<span style="font-size:12px;color:var(--green);text-align:right">\u20a6'+Math.round(v.credit).toLocaleString('en-NG')+'</span>'
-      +'</div>';
+      `<div style="display:grid;grid-template-columns:70px 1fr 130px 110px;gap:8px;align-items:center;background:var(--surface2);padding:8px 12px;border-radius:3px;border:1px solid var(--border);margin-bottom:6px">
+        <span style="font-size:11px;color:var(--accent)">Month ${idx+1}</span>
+        <span style="font-size:12px">${v.label}</span>
+        <span style="font-size:12px;color:var(--green);text-align:right">\u20a6${Math.round(v.gross).toLocaleString('en-NG')}</span>
+        <span style="font-size:11px;color:var(--orange);text-align:right">${recycled>0?'\u2212\u20a6'+Math.round(recycled).toLocaleString('en-NG'):''}</span>
+      </div>`;
     const inflowEl=document.getElementById('inflow-'+(idx+1));
+    const recycleEl=document.getElementById('recycle-'+(idx+1));
     const countEl=document.getElementById('count-'+(idx+1));
     const lblEl=document.getElementById('lbl-'+(idx+1));
-    if(inflowEl){inflowEl.value=Math.round(v.credit);inflowEl.style.borderColor='var(--green)';}
+    if(inflowEl){inflowEl.value=Math.round(v.gross);inflowEl.style.borderColor='var(--green)';}
+    if(recycleEl&&recycled>0){recycleEl.value=Math.round(recycled);recycleEl.style.borderColor='var(--orange)';}
     if(countEl&&v.count>0)countEl.value=v.count;
     if(lblEl)lblEl.textContent=v.label;
+    updateRecycleRow(idx+1);
   });
   document.getElementById('pdf-preview').style.display='block';
+
+  // Build recycling panel
+  const totalRecycleByType={internalMove:0,selfTransfer:0,loanDisbursement:0};
+  data.forEach(v=>{
+    totalRecycleByType.internalMove+=v.internalMove||0;
+    totalRecycleByType.selfTransfer+=v.selfTransfer||0;
+    totalRecycleByType.loanDisbursement+=v.loanDisbursement||0;
+  });
+  const totalRecycled=totalRecycleByType.internalMove+totalRecycleByType.selfTransfer+totalRecycleByType.loanDisbursement;
+
+  if(totalRecycled>0){
+    const panel=document.getElementById('recycle-panel');
+    const rows=document.getElementById('recycle-rows');
+    panel.style.display='block';
+    let html='';
+    if(totalRecycleByType.internalMove>0)
+      html+=`<div class="recycle-row"><span>Internal Wallet Moves (OWealth/savings)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(totalRecycleByType.internalMove).toLocaleString('en-NG')}</span></div>`;
+    if(totalRecycleByType.selfTransfer>0)
+      html+=`<div class="recycle-row"><span>Self-Transfers (same account holder)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(totalRecycleByType.selfTransfer).toLocaleString('en-NG')}</span></div>`;
+    if(totalRecycleByType.loanDisbursement>0)
+      html+=`<div class="recycle-row"><span>Loan Disbursements (OKash, EaseMoni, etc.)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(totalRecycleByType.loanDisbursement).toLocaleString('en-NG')}</span></div>`;
+    html+=`<div class="recycle-row"><span>Total Deducted from Credits</span><span>\u2212\u20a6${Math.round(totalRecycled).toLocaleString('en-NG')}</span></div>`;
+    rows.innerHTML=html;
+  }
 }
 </script>
 </body>
