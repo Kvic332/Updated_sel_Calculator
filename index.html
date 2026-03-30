@@ -758,100 +758,53 @@ function _addToMonthly(monthly,ym,amount,cat){
 // ════════════════════════════════════════════════════════════════════════════
 // PALMPAY PARSER — handles both new (+/- format) and older layout
 // ════════════════════════════════════════════════════════════════════════════
-function buildTransactionBlocks(pages){
-  const blocks=[];
-  const dateRe=/^\d{2}[\/-]\d{2}[\/-](?:20)?\d{2,4}$/;
-  for(const page of pages){
-    let current=null;
-    for(const line of page.lines){
-      const items=(line.items||[]).map(it=>({str:(it.str||'').trim(),x:it.x})).filter(it=>it.str);
-      const text=(line.text||'').replace(/\s+/g,' ').trim();
-      if(!text)continue;
-      const first=items[0]?.str||'';
-      if(dateRe.test(first)){
-        if(current)blocks.push(current);
-        current={lines:[text],items:[...items]};
-      }else if(current){
-        current.lines.push(text);
-        current.items.push(...items);
-      }
-    }
-    if(current)blocks.push(current);
-  }
-  return blocks;
+function parsePalmPay(pages, fullText){
+  const monthly=parsePalmPayStatementText(fullText);
+  if(ok(monthly))return monthly;
+
+  const generic=parseGenericMoneyInTable(pages,fullText,'PalmPay');
+  if(ok(generic))return generic;
+
+  const fallback=parsePalmPayNewFormat(pages, fullText);
+  if(ok(fallback))return fallback;
+
+  return {};
 }
 
-function getYmFromDate(dateStr){
-  let m=/^(\d{2})\/(\d{2})\/(20\d{2})$/.exec(dateStr);
-  if(m)return `${m[3]}-${m[1]}`;
-  m=/^(\d{2})-(\d{2})-(20\d{2})$/.exec(dateStr);
-  if(m)return `${m[3]}-${m[2]}`;
-  m=/^(\d{2})\/(\d{2})\/(\d{2})$/.exec(dateStr);
-  if(m)return `20${m[3]}-${m[1]}`;
-  return null;
-}
-
-function parseAmountToken(str){
-  if(!/^[+-]?[\d,]+\.\d{2}$/.test(str||''))return null;
-  return parseFloat(str.replace(/[+,]/g,''));
-}
-
-function parseGenericMoneyInTable(pages, fullText, bankHint=''){
+function parsePalmPayStatementText(fullText){
   const monthly={};
-  const blocks=buildTransactionBlocks(pages);
-  const nameM=fullText.match(/(?:Account Statement\s*)?Name\s+([A-Z][A-Z\s]{4,})/i)||
-              fullText.match(/Account Name[:\s]+([A-Z][A-Z\s]{4,})/i);
+  const nameM=fullText.match(/Account Statement\s*Name\s+([A-Z][A-Z\s]{4,})/i) ||
+              fullText.match(/Account Name[:\s]+([A-Z][A-Z\s]{4,})/i) ||
+              fullText.match(/Name\s+([A-Z][A-Z\s]{4,})/i);
   const accountName=nameM?nameM[1].trim():'';
 
-  for(const block of blocks){
-    const firstDate=block.items.find(it=>/^\d{2}[\/-]\d{2}[\/-](?:20)?\d{2,4}$/.test(it.str))?.str;
-    const ym=getYmFromDate(firstDate);
-    if(!ym)continue;
+  const normalized=(fullText||'')
+    .replace(/\s+/g,' ')
+    .replace(/([AP]M)(Received|Send|Top up|Buy|Stamp|Disbursement|Repayment|Electronic)/g,'$1 $2');
 
-    const text=block.lines.join(' ');
-    const lower=text.toLowerCase();
-    if(lower.includes('transaction date')&&lower.includes('transaction detail'))continue;
+  const starts=[...normalized.matchAll(/\d{2}\/\d{2}\/20\d{2}\s+\d{2}:\d{2}:\d{2}\s+(?:AM|PM)/g)];
+  if(!starts.length)return {};
 
-    let credit=null;
-    for(const item of block.items){
-      const amt=parseAmountToken(item.str);
-      if(amt===null)continue;
-      if(item.str.startsWith('+')){
-        credit=amt;
-        break;
-      }
-    }
+  for(let i=0;i<starts.length;i++){
+    const start=starts[i].index;
+    const end=i<starts.length-1?starts[i+1].index:normalized.length;
+    const block=normalized.slice(start,end).trim();
+    if(!block)continue;
 
-    if(credit===null){
-      const positives=block.items
-        .map(it=>({amt:parseAmountToken(it.str),x:it.x,str:it.str}))
-        .filter(v=>v.amt!==null&&v.amt>0&&!v.str.startsWith('-'))
-        .sort((a,b)=>a.x-b.x);
+    const dm=/^(\d{2})\/(\d{2})\/(20\d{2})/.exec(block);
+    if(!dm)continue;
+    const ym=`${dm[3]}-${dm[1]}`;
 
-      if(positives.length===1){
-        credit=positives[0].amt;
-      }else if(positives.length>=2){
-        if(bankHint==='PalmPay'||lower.includes('money in')||lower.includes('transaction detail')){
-          credit=positives[0].amt;
-        }else{
-          credit=positives[positives.length-2].amt;
-        }
-      }
-    }
+    const amtM=/\+\s*([\d,]+\.\d{2})\b/.exec(block);
+    if(!amtM)continue;
 
-    if(!credit||credit<=0)continue;
-    addCreditClassified(monthly,ym,credit,text,accountName,text);
+    const amount=parseFloat(amtM[1].replace(/,/g,''));
+    if(!(amount>0))continue;
+
+    addCreditClassified(monthly,ym,amount,block,accountName,block);
   }
 
   return monthly;
-}
-
-function parsePalmPay(pages, fullText){
-  const monthly=parseGenericMoneyInTable(pages,fullText,'PalmPay');
-  if(ok(monthly))return monthly;
-  const fallback=parsePalmPayNewFormat(pages, fullText);
-  if(ok(fallback))return fallback;
-  return {};
 }
 
 function parsePalmPayNewFormat(pages, fullText){
@@ -859,72 +812,34 @@ function parsePalmPayNewFormat(pages, fullText){
   const nameM=fullText.match(/(?:Account Name|Name)\s*[:\n]\s*([A-Z ]{4,})/i);
   const accountName=nameM?nameM[1].trim():'';
 
-  // PalmPay format: date MM/DD/YYYY, money-in column has +AMOUNT
-  const lines=fullText.split('\n');
-  let currentYM=null;
-  let currentDesc='';
+  const normalized=(fullText||'')
+    .replace(/\s+/g,' ')
+    .replace(/([AP]M)(Received|Send|Top up|Buy|Stamp|Disbursement|Repayment|Electronic)/g,'$1 $2');
+
+  const starts=[...normalized.matchAll(/\d{2}\/\d{2}\/20\d{2}\s+\d{2}:\d{2}:\d{2}\s+(?:AM|PM)/g)];
+  if(!starts.length)return {};
+
   let creditCount=0;
+  for(let i=0;i<starts.length;i++){
+    const start=starts[i].index;
+    const end=i<starts.length-1?starts[i+1].index:normalized.length;
+    const block=normalized.slice(start,end).trim();
 
-  for(let i=0;i<lines.length;i++){
-    const line=lines[i].trim();
-    if(!line)continue;
+    const dm=/^(\d{2})\/(\d{2})\/(20\d{2})/.exec(block);
+    if(!dm)continue;
+    const ym=`${dm[3]}-${dm[1]}`;
 
-    // Date pattern: MM/DD/YYYY
-    const dateM=/^(\d{2})\/(\d{2})\/(20\d{2})/.exec(line);
-    if(dateM){
-      const month=parseInt(dateM[1]);
-      const yr=dateM[3];
-      currentYM=`${yr}-${String(month).padStart(2,'0')}`;
-      currentDesc=line;
-      // Look for +AMOUNT on same line
-      const inM=/\+(\d[\d,]*\.\d{2})/.exec(line);
-      if(inM&&currentYM){
-        const amt=parseFloat(inM[1].replace(/,/g,''));
-        if(amt>0){
-          addCreditClassified(monthly,currentYM,amt,line,accountName);
-          creditCount++;
-        }
-      }
-      continue;
-    }
+    const amtM=/\+\s*([\d,]+\.\d{2})\b/.exec(block);
+    if(!amtM)continue;
 
-    // Continuation line with + amount
-    const inM=/\+([\d,]+\.\d{2})/.exec(line);
-    if(inM&&currentYM){
-      const amt=parseFloat(inM[1].replace(/,/g,''));
-      if(amt>0){
-        addCreditClassified(monthly,currentYM,amt,currentDesc+' '+line,accountName);
-        creditCount++;
-      }
+    const amt=parseFloat(amtM[1].replace(/,/g,''));
+    if(amt>0){
+      addCreditClassified(monthly,ym,amt,block,accountName,block);
+      creditCount++;
     }
   }
 
-  // Also try parsing as a table with debit/credit columns
-  if(creditCount<3){
-    // Try line-by-line table approach for PalmPay
-    for(const page of pages){
-      for(const ln of page.lines){
-        const txt=ln.text;
-        // PalmPay table: date | description | money_in | money_out | ref
-        // Money in is usually preceded by + sign or is a standalone number in the right column
-        const datM=/(\d{2})\/(\d{2})\/(20\d{2})/.exec(txt);
-        if(!datM)continue;
-        const mo=parseInt(datM[1]);
-        const yr=datM[3];
-        const ym=`${yr}-${String(mo).padStart(2,'0')}`;
-        // Find a +amount pattern
-        const amtM=/\+\s*([\d,]+\.\d{2})/.exec(txt);
-        if(amtM){
-          const amt=parseFloat(amtM[1].replace(/,/g,''));
-          if(amt>0)addCreditClassified(monthly,ym,amt,txt,accountName);
-        }
-      }
-    }
-  }
-
-  // Validate: need transactions with count > 2 per month
-  const valid=Object.values(monthly).filter(v=>v.count>1).length>0;
-  if(!valid)return {};
+  if(creditCount<3)return {};
   return monthly;
 }
 
@@ -1214,4 +1129,3 @@ function fillInflowFields(data, bankName){
 </script>
 </body>
 </html>
-
