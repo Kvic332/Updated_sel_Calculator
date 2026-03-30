@@ -1136,6 +1136,100 @@ function fillInflowFields(data, bankName){
     document.getElementById('recycle-rows').innerHTML=html;
   }
 }
+
+// Override OPay parsing with column-aware extraction for statements that have
+// explicit Debit / Credit / Balance columns.
+function parseOpayLayout(pages, fullText){
+  const monthly={};
+  const nameM=fullText.match(/Account Name\s+Account Number[^\n]*\n([A-Z][A-Z ]+[A-Z])/)||
+              fullText.match(/Account Name\s*\n([A-Z][A-Z ]+[A-Z])/i)||
+              fullText.match(/ACCOUNT NAME[:\s]+([A-Z][A-Z ]+[A-Z])/i);
+  const accountName=(nameM?nameM[1]:'').trim();
+
+  const rows=[];
+  let stop=false;
+  for(const page of pages){
+    for(const line of page.lines){
+      const text=(line.text||'').replace(/\s+/g,' ').trim();
+      if(!text)continue;
+      if(text.includes('Savings Account')){stop=true;break;}
+      rows.push({
+        text,
+        items:(line.items||[]).map(item=>({
+          str:(item.str||'').trim(),
+          x:item.x
+        }))
+      });
+    }
+    if(stop)break;
+  }
+
+  const DATE_RE=/(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})/i;
+  let currentYM=null;
+
+  for(let i=0;i<rows.length;i++){
+    const row=rows[i];
+    const dm=DATE_RE.exec(row.text);
+    if(dm){
+      const mo=MONTH_MAP[dm[2].toLowerCase()];
+      if(mo)currentYM=dm[3]+'-'+String(mo).padStart(2,'0');
+    }
+
+    const amt=extractOpayCreditAmountFromRow(row);
+    if(!amt||!currentYM)continue;
+
+    const context=getOpayContextWindow(rows,i);
+    addCreditClassified(monthly,currentYM,amt,context,accountName,context);
+  }
+
+  return monthly;
+}
+
+function extractOpayCreditAmountFromRow(row){
+  if(!row||!row.items||!row.items.length)return null;
+
+  let debitBlank=false;
+  let creditAmount=null;
+  let hasBalance=false;
+
+  for(const item of row.items){
+    const str=(item.str||'').trim();
+    const x=item.x||0;
+    if(!str)continue;
+
+    if(str==='--'&&x>=250&&x<290){
+      debitBlank=true;
+      continue;
+    }
+
+    if(!/^[\d,]+\.\d{2}$/.test(str))continue;
+
+    const value=parseFloat(str.replace(/,/g,''));
+    if(x>=295&&x<340)creditAmount=value;
+    else if(x>=340&&x<390)hasBalance=true;
+  }
+
+  return debitBlank&&creditAmount>0&&hasBalance?creditAmount:null;
+}
+
+function rowHasOpayAmountColumns(row){
+  if(!row||!row.items)return false;
+  return row.items.some(item=>{
+    const str=(item.str||'').trim();
+    const x=item.x||0;
+    return (str==='--'&&x>=250&&x<340)||
+      (/^[\d,]+\.\d{2}$/.test(str)&&x>=250&&x<390);
+  });
+}
+
+function getOpayContextWindow(rows,index){
+  const parts=[];
+  for(let j=Math.max(0,index-2);j<=Math.min(rows.length-1,index+1);j++){
+    const row=rows[j];
+    if(j===index||!rowHasOpayAmountColumns(row))parts.push(row.text);
+  }
+  return parts.join(' ');
+}
 </script>
 </body>
 </html>
