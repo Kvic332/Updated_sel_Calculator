@@ -294,9 +294,12 @@ select option{background:var(--surface2)}
     const ignoreKeywords = [
       'Opening Balance', 'Closing Balance',
       'Total Credits', 'Total Debits',
-      'STAMP DUTY', 'EMTL', 'CHARGE', 'VAT',
+      'STAMP DUTY', 'STAMP', 'EMTL', '_EMTL_DC_',
+      'CHARGE', 'VAT',
       'transaction date', 'transaction detail',
-      'Account Summary', 'Statement Period'
+      'Account Summary', 'Statement Period',
+      'BALANCE SUMMARY', 'ACCOUNT BALANCE',
+      'Electronic Money Transfer Levy'
     ];
     const upper = line.toUpperCase();
     return ignoreKeywords.some(w => upper.includes(w.toUpperCase()));
@@ -344,11 +347,23 @@ select option{background:var(--surface2)}
   }
 
   function extractStandardDC(line) {
-    // Standard debit/credit/balance table: credit is second-to-last number
+    // Standard Debit/Credit/Balance table layout:
+    // Pattern: ... DEBIT  CREDIT  BALANCE
+    // A credit transaction has DEBIT = 0.00 and CREDIT > 0
+    // Using nums[-3]=debit, nums[-2]=credit, nums[-1]=balance
     const nums = extractNumbers(line);
     if (nums.length < 3) return 0;
+
+    const debit  = nums[nums.length - 3];
     const credit = nums[nums.length - 2];
-    return credit > 0 ? credit : 0;
+    // balance    = nums[nums.length - 1] — not needed but present
+
+    // Strict rule from ChatGPT recommendation:
+    // debit must be 0, credit must be positive, credit must not look like a running balance
+    if (debit === 0 && credit > 0 && credit < 10_000_000) {
+      return credit;
+    }
+    return 0;
   }
 
   function extractOpayKuda(line) {
@@ -366,16 +381,18 @@ select option{background:var(--surface2)}
   }
 
   function extractGeneric(line) {
-    const nums = extractNumbers(line);
-    if (nums.length < 2) return 0;
-    const credit = nums[nums.length - 2];
-    return credit > 0 ? credit : 0;
+    // Per ChatGPT recommendation: if structure is unclear, NEVER guess credit.
+    // Returning 0 prevents balance values from being misread as income.
+    return 0;
   }
 
   // ========================
-  // GENERIC FALLBACK: process normalised text when all parsers fail
+  // GENERIC FALLBACK: process normalised text ONLY when all structured parsers fail
   // ========================
-  function processNormalizedTextFallback(text, format, accountName) {
+  function processNormalizedTextFallback(text, format, accountName, existingMonthly) {
+    // CRITICAL: prevent parser stacking — if any structured parser already found data, stop here
+    if (existingMonthly && Object.keys(existingMonthly).length > 0) return existingMonthly;
+
     const monthly = {};
 
     // Split on ISO-style dates (YYYY-MM-DD) or DD/MM/YYYY or DD-MON-YY
@@ -867,11 +884,11 @@ select option{background:var(--surface2)}
       if(!ok(monthly))
         monthly=parseRowTransaction(pages.map(p=>p.raw));
 
-      // ✅ NEW: Normalized-text fallback when all structured parsers fail
+      // Normalized-text fallback ONLY when all structured parsers failed
       if(!ok(monthly)){
         const nameM=fullText.match(/Account(?:\s+Name)?[:\s]+([A-Z][A-Z\s]{4,})/i);
         const accountName=nameM?nameM[1].trim():'';
-        monthly=processNormalizedTextFallback(normalizedFull, format, accountName);
+        monthly=processNormalizedTextFallback(normalizedFull, format, accountName, monthly);
       }
 
       const sorted=buildSortedMonths(monthly);
@@ -938,10 +955,10 @@ select option{background:var(--surface2)}
       addCreditClassified(monthly,currentYM,amt,context,accountName,context);
     }
 
-    // ✅ IMPROVED FALLBACK: if OPay spatial parser got nothing, try normalised text
+    // Fallback: if OPay spatial parser got nothing, try normalised text
     if(!ok(monthly)){
       const normalizedFull=normalizeText(fullText);
-      return processNormalizedTextFallback(normalizedFull,'OPAY_KUDA',accountName);
+      return processNormalizedTextFallback(normalizedFull,'OPAY_KUDA',accountName,monthly);
     }
 
     return monthly;
@@ -1295,12 +1312,14 @@ select option{background:var(--surface2)}
           while ((m = nr.exec(lt)) !== null) nums.push(parseFloat(m[0].replace(/,/g,'')));
 
           let credit = null;
-          if (nums.length >= 3 && nums[nums.length-3] === 0) {
-            credit = nums[nums.length-2]; // debit=0, credit=X, balance=Y
-          } else if (nums.length >= 5 && nums[1] === 0 && nums[2] > 0) {
-            credit = nums[2];
-          } else if (nums.length === 4 && nums[0] === 0 && nums[1] > 0) {
-            credit = nums[1];
+          // Strict rule: debit must be 0, credit must be > 0 and < balance threshold
+          // Layout: ... DEBIT  CREDIT  BALANCE  (last three numbers)
+          if (nums.length >= 3) {
+            const debit  = nums[nums.length - 3];
+            const cand   = nums[nums.length - 2];
+            if (debit === 0 && cand > 0 && cand < 10_000_000) {
+              credit = cand;
+            }
           }
 
           if (credit && credit > 0 && !shouldIgnoreLine(lt))
@@ -1312,7 +1331,7 @@ select option{background:var(--surface2)}
     // Fallback: if no results, use normalised text pipeline
     if (!ok(monthly)) {
       const normalizedFull = normalizeText(fullText);
-      return processNormalizedTextFallback(normalizedFull, 'MONIEPOINT_V2', accountName);
+      return processNormalizedTextFallback(normalizedFull, 'MONIEPOINT_V2', accountName, monthly);
     }
 
     return monthly;
@@ -1371,10 +1390,10 @@ select option{background:var(--surface2)}
       }
     }
 
-    // ✅ IMPROVED: if Kuda spatial parser fails, try normalised fallback
+    // If Kuda spatial parser fails, try normalised fallback
     if(!ok(monthly)){
       const fullText=pages.map(p=>p.raw||p.lines.map(l=>l.text).join(' ')).join('\n');
-      return processNormalizedTextFallback(normalizeText(fullText),'KUDA','');
+      return processNormalizedTextFallback(normalizeText(fullText),'KUDA','',monthly);
     }
 
     return monthly;
