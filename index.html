@@ -794,13 +794,16 @@ select option{background:var(--surface2)}
         const tc=await page.getTextContent();
         const vp=page.getViewport({scale:1});
 
-        // Build spatial line map
+        // Build spatial line map — guard against items with no str or no transform
         const lineMap=new Map();
         for(const item of tc.items){
-          if(!item.str.trim())continue;
+          // PDF.js can emit marker objects (EOL, etc.) with no .str — skip them safely
+          const s=item&&typeof item.str==='string'?item.str:'';
+          if(!s.trim())continue;
+          if(!item.transform||item.transform.length<6)continue;
           const y=Math.round(item.transform[5]/2)*2;
           if(!lineMap.has(y))lineMap.set(y,[]);
-          lineMap.get(y).push({str:item.str,x:item.transform[4]});
+          lineMap.get(y).push({str:s,x:item.transform[4]});
         }
 
         const sortedLines=[...lineMap.entries()].sort((a,b)=>b[0]-a[0]).map(([,items])=>{
@@ -808,13 +811,14 @@ select option{background:var(--surface2)}
           return {items:sorted,text:sorted.map(i=>i.str).join(' ')};
         });
 
-        // Build raw text with smart space insertion
+        // Build raw text with smart space insertion — guard every item
         let raw='';
-        for(let k=0;k<tc.items.length;k++){
-          const s=tc.items[k].str;
-          if(!s)continue;
+        // Only keep items that have a real string
+        const validItems=tc.items.filter(it=>it&&typeof it.str==='string'&&it.str);
+        for(let k=0;k<validItems.length;k++){
+          const s=validItems[k].str;
           if(k===0){raw+=s;continue;}
-          const p=tc.items[k-1].str||'';
+          const p=validItems[k-1].str||'';
           // No space if: currency symbol boundary, digit-to-digit continuation, or comma/period separator
           const noSp=p.endsWith('₦')||s.startsWith('₦')||
                      (p.match(/\d$/)&&s.match(/^[.,\d]/))||
@@ -949,7 +953,7 @@ select option{background:var(--surface2)}
     const dashXs=row.items.filter(item=>(item.str||'').trim()==='--').map(item=>item.x).sort((a,b)=>a-b);
     const nums=row.items
       .filter(item=>/^[\d,]+\.\d{2}$/.test((item.str||'').trim()))
-      .map(item=>({x:item.x,value:parseFloat(item.str.replace(/,/g,''))}))
+      .map(item=>({x:item.x,value:parseFloat((item.str||'').replace(/,/g,''))}))
       .sort((a,b)=>a.x-b.x);
 
     if(!dashXs.length||nums.length<2)return null;
@@ -1044,12 +1048,12 @@ select option{background:var(--surface2)}
       for(const item of block.items){
         const amt=parseAmountToken(item.str);
         if(amt===null)continue;
-        if(item.str.startsWith('+')){credit=amt;break;}
+        if((item.str||'').startsWith('+')){credit=amt;break;}
       }
 
       if(credit===null){
         const positives=block.items
-          .map(it=>({amt:parseAmountToken(it.str),x:it.x,str:it.str}))
+          .map(it=>({amt:parseAmountToken(it.str),x:it.x,str:(it.str||'')}))
           .filter(v=>v.amt!==null&&v.amt>0&&!v.str.startsWith('-'))
           .sort((a,b)=>a.x-b.x);
 
@@ -1284,10 +1288,10 @@ select option{background:var(--surface2)}
 
       // Find column boundary from header row
       for(const line of lines){
-        const txt=line.text.toLowerCase();
+        const txt=(line.text||'').toLowerCase();
         if(txt.includes('money in')&&txt.includes('money out')){
-          const mi=line.items.find(it=>it.str.toLowerCase().includes('money in'));
-          const mo=line.items.find(it=>it.str.toLowerCase().includes('money out'));
+          const mi=line.items.find(it=>(it.str||'').toLowerCase().includes('money in'));
+          const mo=line.items.find(it=>(it.str||'').toLowerCase().includes('money out'));
           if(mi&&mo)moneyInMaxX=(mi.x+mo.x)/2;
           break;
         }
@@ -1296,9 +1300,10 @@ select option{background:var(--surface2)}
       let currentYM=null;
       for(const line of lines){
         const items=line.items;
-        if(!items.length)continue;
+        if(!items||!items.length)continue;
 
-        const dm=DATE_RE.exec(items[0].str.trim());
+        const firstStr=(items[0]&&typeof items[0].str==='string'?items[0].str:'').trim();
+        const dm=DATE_RE.exec(firstStr);
         if(dm){
           const[,,mon,yr]=dm;
           const fy=yr.length===4?yr:'20'+yr;
@@ -1306,11 +1311,12 @@ select option{background:var(--surface2)}
         }
 
         if(!currentYM)continue;
-        if(CBN_SKIP.some(s=>line.text.toLowerCase().includes(s)))continue;
-        if(shouldIgnoreLine(line.text))continue;
+        if(CBN_SKIP.some(s=>(line.text||'').toLowerCase().includes(s)))continue;
+        if(shouldIgnoreLine(line.text||''))continue;
 
         for(const item of items){
-          const am=AMT_RE.exec(item.str.trim());
+          const itemStr=typeof item.str==='string'?item.str:'';
+          const am=AMT_RE.exec(itemStr.trim());
           if(am&&item.x<moneyInMaxX){
             const amt=parseFloat(am[1].replace(/,/g,''));
             if(amt>0)addCreditClassified(monthly,currentYM,amt,line.text,'',line.text);
