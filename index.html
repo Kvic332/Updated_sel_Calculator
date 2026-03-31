@@ -246,7 +246,9 @@ function shouldIgnoreLine(line){
 }
 
 function isRecycledTransaction(line){
-  const rp=['TRANSFER TO SELF','TRANSFER TO OWN','REVERSAL','RETURNED','REFUND','CHARGEBACK'];
+  // NOTE: 'REFUND' intentionally excluded — a refund credit to the account is real income.
+  // Only flag outbound-style patterns that indicate recycling on the debit side.
+  const rp=['TRANSFER TO SELF','TRANSFER TO OWN','REVERSAL','RETURNED','CHARGEBACK'];
   const u=line.toUpperCase();
   return rp.some(p=>u.includes(p));
 }
@@ -794,12 +796,67 @@ function parseMoniepoint(pages,fullText){
   const monthly={};
   const nameM=fullText.match(/(?:Business\s+Name|Account\s*Name)[:\s]+([A-Z][A-Z ]{3,})/i);
   const accountName=nameM?nameM[1].trim():'';
-  const isBusiness=/20\d\d-\d\d-\d\dT\d\d:/.test(fullText);
+  // Detect wide-page Moniepoint format (page width ~1829px, iText producer).
+  // Date is split across 3 separate y-lines: "2025-" / "12-" / "26T15:" at far-left.
+  // Amounts: Settlement Debit≈941px, Settlement Credit≈1006px on 1829px page.
+  // State MUST be carried across pages — transactions straddle page breaks.
+  const isWide = pages.length > 0 && (pages[0].width || 928) > 1500;
+  const isBusiness = !isWide && /20\d\d-\d\d-\d\dT\d\d:/.test(fullText);
 
-  if(isBusiness){
+  if(isWide){
+    // ── WIDE-PAGE MONIEPOINT FORMAT (iText, ~1829px wide) ─────────────
+    // Date is split across lines: "YYYY-" at y=N, "MM-" at y=N+12 (far left x<120).
+    // Amounts at x > 50% of pageWidth: [SettlementDebit, SettlementCredit, BalanceBefore, BalanceAfter]
+    // State is global across all pages to handle cross-page transactions.
+    const IGNORE_KW=['emtl','electronic money transfer levy','stamp duty','vat on',
+                     'sms alert','commission on','annual charge','maintenance fee',
+                     'card maintenance','card issuance'];
+    const RECYCLE_KW=['reversal','returned','chargeback'];
+
+    // Cross-page state
+    let pendingYear=null, pendingMonth=null, wideYM=null;
+
+    for(const page of pages){
+      const AMT_X=(page.width||1829)*0.50;
+
+      for(const line of page.lines){
+        const lineText=line.text||'';
+        // Only consider far-left items (x<120) for date fragment detection
+        const leftText=(line.items||[]).filter(it=>it.x<120).map(it=>it.str||'').join(' ').trim();
+
+        // Year line: "2025-" at far left
+        const yrM=/^(20\d\d)-$/.exec(leftText);
+        if(yrM){pendingYear=yrM[1];pendingMonth=null;continue;}
+
+        // Month line: "12-" at far left — must follow a year line
+        const moM=/^(\d{2})-$/.exec(leftText);
+        if(moM&&pendingYear){pendingMonth=moM[1];wideYM=`${pendingYear}-${pendingMonth}`;continue;}
+
+        if(!wideYM)continue;
+
+        // Find amount items in right-side columns (x > 50% of page width)
+        const amtItems=(line.items||[])
+          .filter(it=>it.x>AMT_X&&/^[\d,]+\.\d{2}$/.test((it.str||'').trim()))
+          .map(it=>({x:it.x,value:parseFloat(it.str.replace(/,/g,''))}))
+          .sort((a,b)=>a.x-b.x);  // [SettlementDebit, SettlementCredit, BalBefore, BalAfter]
+
+        if(amtItems.length<2)continue;
+        const debit=amtItems[0].value;
+        const credit=amtItems[1].value;
+        if(debit!==0||credit<=0)continue;
+
+        const ll=lineText.toLowerCase();
+        if(IGNORE_KW.some(k=>ll.includes(k)))continue;
+        if(RECYCLE_KW.some(k=>ll.includes(k)))continue;
+
+        addCreditClassified(monthly,wideYM,credit,lineText,accountName,lineText);
+      }
+    }
+
+  }else if(isBusiness){
     // BUSINESS FORMAT — spatial line iteration (FIXED)
     const IGNORE_KW=['emtl','electronic money transfer levy','stamp duty','vat on','sms alert','commission on','annual charge','maintenance fee','card maintenance','card issuance'];
-    const RECYCLE_KW=['reversal','refund','returned','chargeback'];
+    const RECYCLE_KW=['reversal','returned','chargeback'];
 
     for(const page of pages){
       // Moniepoint column layout: Debit≈729px, Credit≈784px, Balance≈839px on 928px page.
