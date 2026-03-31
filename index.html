@@ -52,22 +52,16 @@ select option{background:var(--surface2)}
 #file-input{position:absolute;inset:0;opacity:0;cursor:pointer}
 .status-box{display:none;padding:12px 16px;border-radius:3px;font-size:12px;margin-top:12px}
 .pdf-preview{display:none;margin-top:16px}
-
-/* Inflow table — 6 columns now */
 .inflow-table{width:100%;border-collapse:collapse;margin-top:8px}
 .inflow-table th{font-size:9px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)}
 .inflow-table td{padding:6px 8px;border-bottom:1px solid rgba(30,58,95,.4);vertical-align:middle}
 .inflow-table input{padding:6px 8px;font-size:12px}
 .recycle-cell{font-size:11px;color:var(--orange)}
 .net-cell{font-size:12px;color:var(--green);font-weight:700}
-
-/* Recycle breakdown panel */
 .recycle-panel{background:rgba(255,149,0,.05);border:1px solid rgba(255,149,0,.25);border-radius:3px;padding:16px;margin-top:12px;display:none}
 .recycle-title{font-size:10px;letter-spacing:2px;color:var(--orange);text-transform:uppercase;margin-bottom:10px}
 .recycle-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,149,0,.1);font-size:11px}
 .recycle-row:last-child{border-bottom:none;font-weight:700;color:var(--accent)}
-
-/* Requested section */
 .req-card{background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:16px;margin-top:12px}
 .req-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px}
 .req-row:last-child{border-bottom:none}
@@ -76,8 +70,6 @@ select option{background:var(--surface2)}
 .tag{display:inline-block;font-size:9px;padding:2px 6px;border-radius:2px;margin-left:6px;vertical-align:middle}
 .tag-warn{background:rgba(255,149,0,.15);color:var(--orange);border:1px solid rgba(255,149,0,.3)}
 .tag-info{background:rgba(0,212,255,.1);color:var(--accent);border:1px solid rgba(0,212,255,.2)}
-
-/* Preview table with 5-column breakdown */
 .preview-table{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px}
 .preview-table th{font-size:9px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;padding:6px 10px;text-align:right;border-bottom:1px solid var(--border);white-space:nowrap}
 .preview-table th:first-child{text-align:left}
@@ -90,7 +82,6 @@ select option{background:var(--surface2)}
 .col-internal{color:var(--orange)}
 .col-obligation{color:var(--gold)}
 .col-net{color:var(--accent);font-weight:700}
-/* Legend pills */
 .legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
 .legend-pill{font-size:9px;letter-spacing:1px;padding:3px 8px;border-radius:20px;text-transform:uppercase}
 .pill-gross{background:rgba(0,230,118,.1);color:var(--green);border:1px solid rgba(0,230,118,.2)}
@@ -257,12 +248,179 @@ select option{background:var(--surface2)}
     </div>
   </div>
 </div>
+
 <script>
   pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   const MONTH_ABBR={1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'};
   const MONTH_MAP={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
-  
-  // Inflow rows
+
+  // ========================
+  // TEXT NORMALIZATION (fixed)
+  // ========================
+  function normalizeText(text) {
+    return text
+      // Re-join split timestamps like "14: 32: 55" → "14:32:55"
+      .replace(/(\d{2})\s*:\s*(\d{2})\s*:\s*(\d{2})/g, '$1:$2:$3')
+      // Collapse newlines to spaces
+      .replace(/\n+/g, ' ')
+      // Collapse multiple spaces
+      .replace(/\s{2,}/g, ' ')
+      // Remove commas inside numbers (e.g. 1,000,000 → 1000000) — for number parsing only
+      .replace(/(\d),(?=\d{3})/g, '$1');
+  }
+
+  // ========================
+  // FORMAT DETECTION (improved)
+  // ========================
+  function detectBankFormat(text) {
+    const t = text.toLowerCase();
+
+    if (t.includes('settlement credit') || t.includes('transaction amount')) return 'MONIEPOINT_V2';
+    if (t.includes('moniepoint')) return 'MONIEPOINT_V2';
+    if (t.includes('kuda')) return 'KUDA';
+    if (t.includes('owealth') || t.includes('opay') || t.includes('9payment')) return 'OPAY_KUDA';
+    if (t.includes('palmpay')) return 'PALMPAY';
+
+    if (t.includes('money in') && t.includes('money out')) return 'OPAY_KUDA';
+    if (t.includes('debit') && t.includes('credit') && t.includes('balance')) return 'STANDARD_DC';
+
+    return 'GENERIC';
+  }
+
+  // ========================
+  // IGNORE / RECYCLE FILTERS (improved)
+  // ========================
+  function shouldIgnoreLine(line) {
+    const ignoreKeywords = [
+      'Opening Balance', 'Closing Balance',
+      'Total Credits', 'Total Debits',
+      'STAMP DUTY', 'EMTL', 'CHARGE', 'VAT',
+      'transaction date', 'transaction detail',
+      'Account Summary', 'Statement Period'
+    ];
+    const upper = line.toUpperCase();
+    return ignoreKeywords.some(w => upper.includes(w.toUpperCase()));
+  }
+
+  function isRecycledTransaction(line) {
+    const recyclePatterns = [
+      'TRANSFER TO SELF', 'TRANSFER TO OWN',
+      'REVERSAL', 'RETURNED',
+      'REFUND', 'CHARGEBACK'
+    ];
+    // NOTE: Intentionally NOT blocking all "TRANSFER TO" or "TRF" here,
+    // because legitimate salary credits often contain "TRF". 
+    // Recycling is handled more precisely by classifyCredit() below.
+    const upper = line.toUpperCase();
+    return recyclePatterns.some(p => upper.includes(p));
+  }
+
+  // ========================
+  // NUMBER EXTRACTION HELPER
+  // ========================
+  function extractNumbers(text) {
+    return (text.match(/-?\d+(\.\d+)?/g) || []).map(Number);
+  }
+
+  // ========================
+  // CREDIT EXTRACTION BY FORMAT
+  // ========================
+  function extractCreditFromLine(line, format) {
+    if (shouldIgnoreLine(line)) return 0;
+    if (isRecycledTransaction(line)) return 0;
+
+    switch (format) {
+      case 'STANDARD_DC':
+      case 'MONIEPOINT_V2':
+        return extractStandardDC(line);
+
+      case 'OPAY_KUDA':
+      case 'KUDA':
+        return extractOpayKuda(line);
+
+      default:
+        return extractGeneric(line);
+    }
+  }
+
+  function extractStandardDC(line) {
+    // Standard debit/credit/balance table: credit is second-to-last number
+    const nums = extractNumbers(line);
+    if (nums.length < 3) return 0;
+    const credit = nums[nums.length - 2];
+    return credit > 0 ? credit : 0;
+  }
+
+  function extractOpayKuda(line) {
+    // Try explicit "Money In" label first
+    const match = line.match(/Money\s+In[:\s]*([\d,\.]+)/i);
+    if (match) return parseFloat(match[1].replace(/,/g, ''));
+
+    // Try Naira-sign prefixed amount on the left side
+    const nairaMatch = line.match(/₦([\d,]+\.\d{2})/);
+    if (nairaMatch) return parseFloat(nairaMatch[1].replace(/,/g, ''));
+
+    const nums = extractNumbers(line);
+    if (nums.length < 2) return 0;
+    return nums.find(n => n > 0) || 0;
+  }
+
+  function extractGeneric(line) {
+    const nums = extractNumbers(line);
+    if (nums.length < 2) return 0;
+    const credit = nums[nums.length - 2];
+    return credit > 0 ? credit : 0;
+  }
+
+  // ========================
+  // GENERIC FALLBACK: process normalised text when all parsers fail
+  // ========================
+  function processNormalizedTextFallback(text, format, accountName) {
+    const monthly = {};
+
+    // Split on ISO-style dates (YYYY-MM-DD) or DD/MM/YYYY or DD-MON-YY
+    const ISO_DATE = /\d{4}-\d{2}-\d{2}/;
+    const DMY_DATE = /\d{2}\/\d{2}\/20\d{2}/;
+    const MON_DATE = /\d{2}-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-\d{2}/i;
+
+    // Build line segments
+    let lines = text.split(/(?=\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/20\d{2}|\d{2}-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-\d{2})/i);
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      let ym = null;
+
+      const isoM = line.match(/(\d{4})-(\d{2})-\d{2}/);
+      if (isoM) ym = `${isoM[1]}-${isoM[2]}`;
+
+      if (!ym) {
+        const dmyM = line.match(/(\d{2})\/(\d{2})\/(20\d{2})/);
+        if (dmyM) ym = `${dmyM[3]}-${dmyM[1]}`;
+      }
+
+      if (!ym) {
+        const monM = line.match(/\d{2}-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-(\d{2})/i);
+        if (monM) {
+          const mo = MONTH_MAP[monM[1].toLowerCase().slice(0,3)];
+          if (mo) ym = `20${monM[2]}-${String(mo).padStart(2,'0')}`;
+        }
+      }
+
+      if (!ym) continue;
+
+      const credit = extractCreditFromLine(line, format);
+      if (credit <= 0) continue;
+
+      addCreditClassified(monthly, ym, credit, line, accountName, line);
+    }
+
+    return monthly;
+  }
+
+  // ========================
+  // INFLOW ROWS UI
+  // ========================
   (function buildInflowRows(){
     const now=new Date(),tbody=document.getElementById('inflow-rows');
     for(let i=1;i<=6;i++){
@@ -277,15 +435,17 @@ select option{background:var(--surface2)}
       </tr>`;
     }
   })();
-  
+
   function updateRecycleRow(i){
     const gross=parseFloat(document.getElementById('inflow-'+i).value)||0;
     const recycle=parseFloat(document.getElementById('recycle-'+i).value)||0;
     const net=Math.max(gross-recycle,0);
-    document.getElementById('net-'+i).textContent=net>0?'\u20a6'+Math.round(net).toLocaleString('en-NG'):'-';
+    document.getElementById('net-'+i).textContent=net>0?'₦'+Math.round(net).toLocaleString('en-NG'):'-';
   }
-  
-  // Calculator
+
+  // ========================
+  // CALCULATOR LOGIC
+  // ========================
   function getInterestRate(a,loc,pt){
     if(pt==='NTB'){
       if(loc==='Lagos'){
@@ -319,6 +479,7 @@ select option{background:var(--surface2)}
     }
     return null;
   }
+
   function getRateFromMaxRep(a,loc,pt){
     if(pt==='NTB'){
       if(loc==='Lagos'){
@@ -349,17 +510,28 @@ select option{background:var(--surface2)}
     }
     return null;
   }
-  function getDTI(tot,pt){if(pt==='NTB')return 0.08;if(pt==='RENEWAL'||pt==='TOP-UP')return tot>=801000?0.1:0;return 0;}
+
+  function getDTI(tot,pt){
+    if(pt==='NTB')return 0.08;
+    if(pt==='RENEWAL'||pt==='TOP-UP')return tot>=801000?0.1:0;
+    return 0;
+  }
+
   function getApplicableTurnover(nets,pt){
     const tot=nets.reduce((a,b)=>a+b,0),avg=tot/nets.length;
     const trimmed=(tot-Math.min(...nets)-Math.max(...nets))/4;
     return pt==='NTB'?Math.min(avg,trimmed):avg;
   }
-  function pvCalc(r,n,p){if(r===0)return p*n;return p*(1-Math.pow(1+r,-n))/r;}
+
+  function pvCalc(r,n,p){
+    if(r===0)return p*n;
+    return p*(1-Math.pow(1+r,-n))/r;
+  }
+
   function roundUp1000(n){return Math.ceil(n/1000)*1000;}
-  function fmt(n){return '\u20a6'+Math.round(n).toLocaleString('en-NG');}
+  function fmt(n){return '₦'+Math.round(n).toLocaleString('en-NG');}
   function fmtPct(n){return n?(n*100).toFixed(2)+'%':'--';}
-  
+
   function runCalculation(){
     const nets=[],counts=[];
     for(let i=1;i<=6;i++){
@@ -373,7 +545,7 @@ select option{background:var(--surface2)}
     const tenor=parseInt(document.getElementById('tenor').value);
     const otherLoans=parseFloat(document.getElementById('other-loans').value)||0;
     const reqLoan=parseFloat(document.getElementById('requested-loan').value)||0;
-  
+
     const totalNet=nets.reduce((a,b)=>a+b,0);
     const avgCount=counts.reduce((a,b)=>a+b,0)/counts.length;
     const repFreq=avgCount>=12?'Weekly':'Monthly';
@@ -383,7 +555,7 @@ select option{background:var(--surface2)}
     const maxTotalRep=maxRepMonthly*tenor;
     const rateForPV=getRateFromMaxRep(maxTotalRep,loc,pt);
     const WEEKS=4.33333;
-  
+
     let newLoan=0;
     if(rateForPV&&maxRepMonthly>0){
       const pv=pvCalc(rateForPV,tenor,maxRepMonthly);
@@ -405,19 +577,19 @@ select option{background:var(--surface2)}
         }
       }
     }
-  
+
     const intRate=newLoan>0?getInterestRate(newLoan,loc,pt):null;
     const displayRep=repFreq==='Weekly'?maxRepMonthly/WEEKS:maxRepMonthly;
     const minLoan=loc==='Lagos'?100000:(pt==='NTB'?200000:500000);
     const maxLoan=loc==='Lagos'?10000000:7000000;
     const approved=newLoan>=minLoan&&newLoan<=maxLoan;
     const decision=newLoan<minLoan?'Below product minimum':approved?'Max loan amount':'Invalid Loan Amount';
-  
+
     document.getElementById('results-section').style.display='block';
     document.getElementById('results-section').scrollIntoView({behavior:'smooth'});
     const banner=document.getElementById('decision-banner');
     banner.className='decision-banner '+(approved?'approved':'rejected');
-    banner.textContent=(approved?'\u2705':'\u274C')+' '+decision;
+    banner.textContent=(approved?'✅':'❌')+' '+decision;
     document.getElementById('r-loan').textContent=fmt(newLoan);
     document.getElementById('r-loan').className='result-value '+(approved?'green':'red');
     document.getElementById('r-turnover').textContent=fmt(appTurnover);
@@ -427,7 +599,7 @@ select option{background:var(--surface2)}
     document.getElementById('r-freq').textContent=repFreq;
     document.getElementById('r-rep').textContent=fmt(displayRep);
     document.getElementById('r-totalrep').textContent=fmt(maxTotalRep);
-  
+
     const reqSec=document.getElementById('requested-section');
     if(reqLoan>0){
       reqSec.style.display='block';
@@ -443,14 +615,16 @@ select option{background:var(--surface2)}
       document.getElementById('req-rate').textContent=getInterestRate(reqLoan,loc,pt)?fmtPct(getInterestRate(reqLoan,loc,pt)):'--';
       document.getElementById('req-vs').textContent=(reqLoan-newLoan>=0?'+':'')+fmt(Math.abs(reqLoan-newLoan));
       const st=document.getElementById('req-status');
-      st.textContent=within?'Below max \u2014 eligible':'Above max \u2014 not eligible';
+      st.textContent=within?'Below max — eligible':'Above max — not eligible';
       st.style.color=within?'var(--green)':'var(--red)';
     }else{
       reqSec.style.display='none';
     }
   }
-  
-  // File handling
+
+  // ========================
+  // FILE HANDLING
+  // ========================
   let currentFile=null;
   function handleDragOver(e){e.preventDefault();document.getElementById('drop-zone').classList.add('drag-over');}
   function handleDragLeave(){document.getElementById('drop-zone').classList.remove('drag-over');}
@@ -468,7 +642,7 @@ select option{background:var(--surface2)}
     document.getElementById('drop-icon').textContent='OK';
     document.getElementById('drop-icon').style.color='var(--green)';
     document.getElementById('drop-label').innerHTML='<span style="color:var(--green);font-weight:700">'+f.name+'</span>';
-    document.getElementById('drop-sub').textContent=(f.size/1024).toFixed(0)+' KB \u2014 '+(isXL?'Mono Excel':'PDF')+' \u2014 Ready to Extract';
+    document.getElementById('drop-sub').textContent=(f.size/1024).toFixed(0)+' KB — '+(isXL?'Mono Excel':'PDF')+' — Ready to Extract';
     document.getElementById('drop-zone').style.borderColor='var(--green)';
     hideStatus();
   }
@@ -481,7 +655,7 @@ select option{background:var(--surface2)}
     el.textContent=msg;
   }
   function hideStatus(){document.getElementById('pdf-status').style.display='none';}
-  
+
   async function extractBankStatement(){
     if(!currentFile){showStatus('Please select a PDF or XLSX file first.','error');return;}
     showStatus('Extracting monthly credits...','info');
@@ -498,35 +672,41 @@ select option{background:var(--surface2)}
       document.getElementById('extract-btn-text').textContent='Extract Monthly Credits';
     }
   }
-  
-  // Classification
-  function classifyCredit(currentLine,fullContext,accountHolderName){
+
+  // ========================
+  // CREDIT CLASSIFICATION ENGINE
+  // ========================
+  function classifyCredit(currentLine, fullContext, accountHolderName){
     const cl=(currentLine||'').toLowerCase();
     const ctx=(fullContext||'').toLowerCase();
     const name=(accountHolderName||'').toLowerCase();
-  
+
+    // OWealth / internal wallet round-trips
     if(cl.includes('owealth withdrawal')||cl.includes('owealth deposit')||
        cl.includes('owealth interest')||cl.includes('auto-save to owealth')||
        cl.includes('savings withdrawal')||cl.includes('owealth balance'))return 'internalMove';
-  
+
+    // Known loan disbursement sources
     const loanKw=['okash','easemoni','fairmoney','renmoney','palmcredit','branch loan',
                   'carbon ','migo ','lidya ','zedvance','creditwave','quickcheck',
                   'loan disburs','credit disburs','disbursement'];
     if(loanKw.some(k=>ctx.includes(k)))return 'loanDisbursement';
-  
+
+    // Self-transfer detection by name matching
     if(name&&name.length>4){
       const nameParts=name.split(/\s+/).filter(p=>p.length>3);
       if(nameParts.filter(p=>ctx.includes(p)).length>=2)return 'selfTransfer';
     }
-  
+
+    // Betting / gambling winbacks
     if(cl.includes('sportybet')||cl.includes('sporty|')||cl.includes('betnaija')||
        cl.includes('bet9ja')||cl.includes('1xbet')||cl.includes('betking')||
        (cl.includes('opay payment gateway')&&ctx.includes('sporty')))return 'recycleFunds';
-  
+
     return 'realCredit';
   }
-  
-  function addCreditClassified(monthly,ym,amount,contextWindow,accountHolderName,currentLine){
+
+  function addCreditClassified(monthly, ym, amount, contextWindow, accountHolderName, currentLine){
     if(!ym||!amount||amount<=0)return;
     if(!monthly[ym])monthly[ym]={
       gross:0,count:0,
@@ -538,16 +718,22 @@ select option{background:var(--surface2)}
     const cat=classifyCredit(currentLine||contextWindow,contextWindow,accountHolderName);
     monthly[ym][cat]=(monthly[ym][cat]||0)+amount;
   }
-  function ymToLabel(ym){const[yr,mo]=ym.split('-');return MONTH_ABBR[parseInt(mo,10)]+' '+yr.slice(2);}
-  
-  // Excel
+
+  function ymToLabel(ym){
+    const[yr,mo]=ym.split('-');
+    return MONTH_ABBR[parseInt(mo,10)]+' '+yr.slice(2);
+  }
+
+  // ========================
+  // EXCEL PARSER
+  // ========================
   async function extractExcel(file){
     const ab=await file.arrayBuffer();
     const wb=XLSX.read(ab,{type:'array',cellDates:true});
     const ws=wb.Sheets[wb.SheetNames[0]];
     const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
     let hdrIdx=-1;
-  
+
     for(let i=0;i<Math.min(rows.length,35);i++){
       if(String(rows[i][0]||'').toLowerCase().trim()==='transaction date'){hdrIdx=i;break;}
     }
@@ -558,13 +744,13 @@ select option{background:var(--surface2)}
       }
     }
     if(hdrIdx===-1){showStatus('Could not locate transaction header in Excel file.','error');return;}
-  
+
     let accountName='';
     for(let i=0;i<hdrIdx;i++){
       const c0=String(rows[i][0]||'').toLowerCase();
       if(c0==='name'){accountName=String(rows[i][1]||'');break;}
     }
-  
+
     const hdr=rows[hdrIdx].map(c=>String(c||'').toLowerCase().trim());
     let dateCol=0,creditCol=2,narrationCol=5;
     for(let c=0;c<hdr.length;c++){
@@ -572,7 +758,7 @@ select option{background:var(--surface2)}
       if(hdr[c]==='credit'||hdr[c].includes('credit amt')||hdr[c].includes('money in'))creditCol=c;
       if(hdr[c]==='narration'||hdr[c].includes('narrat')||hdr[c].includes('description')||hdr[c].includes('detail'))narrationCol=c;
     }
-  
+
     const monthly={};
     for(let i=hdrIdx+1;i<rows.length;i++){
       const row=rows[i];
@@ -586,78 +772,117 @@ select option{background:var(--surface2)}
       const narration=String(row[narrationCol]||'');
       addCreditClassified(monthly,ym,credit,narration,accountName,narration);
     }
-  
+
     const sorted=buildSortedMonths(monthly);
     if(!sorted.length){showStatus('No credit transactions found in Excel statement.','error');return;}
     fillInflowFields(sorted,accountName||'Mono Excel');
     showStatus('Extracted '+sorted.length+' months from Mono Excel statement','success');
   }
-  
-  // PDF dispatch
+
+  // ========================
+  // PDF EXTRACTION (fixed text join)
+  // ========================
   async function extractPDF(file){
     const password=document.getElementById('pdf-password').value||'';
     try{
       const ab=await file.arrayBuffer();
       const pdf=await pdfjsLib.getDocument({data:ab,password}).promise;
       const pages=[];
-  
+
       for(let i=1;i<=pdf.numPages;i++){
         const page=await pdf.getPage(i);
         const tc=await page.getTextContent();
         const vp=page.getViewport({scale:1});
+
+        // Build spatial line map
         const lineMap=new Map();
-  
         for(const item of tc.items){
           if(!item.str.trim())continue;
           const y=Math.round(item.transform[5]/2)*2;
           if(!lineMap.has(y))lineMap.set(y,[]);
           lineMap.get(y).push({str:item.str,x:item.transform[4]});
         }
-  
+
         const sortedLines=[...lineMap.entries()].sort((a,b)=>b[0]-a[0]).map(([,items])=>{
           const sorted=items.sort((a,b)=>a.x-b.x);
           return {items:sorted,text:sorted.map(i=>i.str).join(' ')};
         });
-  
+
+        // Build raw text with smart space insertion
         let raw='';
         for(let k=0;k<tc.items.length;k++){
           const s=tc.items[k].str;
           if(!s)continue;
           if(k===0){raw+=s;continue;}
           const p=tc.items[k-1].str||'';
-          const noSp=p.endsWith('\u20a6')||s.startsWith('\u20a6')||(p.match(/\d$/)&&s.match(/^[.,\d]/))||(p.match(/[.,]$/)&&s.match(/^\d/));
+          // No space if: currency symbol boundary, digit-to-digit continuation, or comma/period separator
+          const noSp=p.endsWith('₦')||s.startsWith('₦')||
+                     (p.match(/\d$/)&&s.match(/^[.,\d]/))||
+                     (p.match(/[.,]$/)&&s.match(/^\d/));
           raw+=(noSp?'':' ')+s;
         }
-  
+
         pages.push({raw,lines:sortedLines,width:vp.width});
       }
-  
+
       const fullText=pages.map(p=>p.raw).join('\n');
+
+      // Apply normalization to the full text for format detection
+      const normalizedFull = normalizeText(fullText);
       const bank=detectBank(fullText);
+      const format=detectBankFormat(normalizedFull);
+
       const ft=fullText.toLowerCase();
       let monthly={};
-  
-      if(bank==='Moniepoint'||ft.includes('moniepoint'))monthly=parseMoniepoint(pages,fullText);
-      if(!ok(monthly)&&(bank.includes('Kuda')||ft.includes('kuda')))monthly=parseKudaLayout(pages);
-      if(!ok(monthly)&&(bank==='OPay'||ft.includes('owealth')||ft.includes('9payment')))monthly=parseOpayLayout(pages,fullText);
-      if(!ok(monthly)&&bank==='PalmPay')monthly=parsePalmPay(pages,fullText);
-      if(!ok(monthly))monthly=parseGenericMoneyInTable(pages,fullText,bank);
-      if(!ok(monthly)&&(bank==='Access Bank'||bank==='GTBank'))monthly=parseRowTransaction(pages.map(p=>p.raw));
-      if(!ok(monthly))monthly=parseMBSSummaryTable(fullText);
-      if(!ok(monthly))monthly=parseSummaryTable(fullText);
-      if(!ok(monthly))monthly=parseRowTransaction(pages.map(p=>p.raw));
-  
+
+      // Run bank-specific parsers in priority order
+      if(bank==='Moniepoint'||ft.includes('moniepoint'))
+        monthly=parseMoniepoint(pages,fullText);
+
+      if(!ok(monthly)&&(bank.includes('Kuda')||ft.includes('kuda')))
+        monthly=parseKudaLayout(pages);
+
+      if(!ok(monthly)&&(bank==='OPay'||ft.includes('owealth')||ft.includes('9payment')))
+        monthly=parseOpayLayout(pages,fullText);
+
+      if(!ok(monthly)&&bank==='PalmPay')
+        monthly=parsePalmPay(pages,fullText);
+
+      if(!ok(monthly))
+        monthly=parseGenericMoneyInTable(pages,fullText,bank);
+
+      if(!ok(monthly)&&(bank==='Access Bank'||bank==='GTBank'))
+        monthly=parseRowTransaction(pages.map(p=>p.raw));
+
+      if(!ok(monthly))
+        monthly=parseMBSSummaryTable(fullText);
+
+      if(!ok(monthly))
+        monthly=parseSummaryTable(fullText);
+
+      if(!ok(monthly))
+        monthly=parseRowTransaction(pages.map(p=>p.raw));
+
+      // ✅ NEW: Normalized-text fallback when all structured parsers fail
+      if(!ok(monthly)){
+        const nameM=fullText.match(/Account(?:\s+Name)?[:\s]+([A-Z][A-Z\s]{4,})/i);
+        const accountName=nameM?nameM[1].trim():'';
+        monthly=processNormalizedTextFallback(normalizedFull, format, accountName);
+      }
+
       const sorted=buildSortedMonths(monthly);
       if(!sorted.length){showStatus('Could not extract monthly credits. Format may not be supported.','error');return;}
       fillInflowFields(sorted,bank);
       showStatus('Extracted '+sorted.length+' months from '+bank+' statement','success');
+
     }catch(err){
       if(err.name==='PasswordException')showStatus('Incorrect or missing PDF password.','error');
       else throw err;
     }
   }
-  
+
   function ok(m){return Object.keys(m).length>0;}
+
   function buildSortedMonths(monthly){
     return Object.entries(monthly)
       .filter(([,v])=>v.gross>0)
@@ -665,15 +890,17 @@ select option{background:var(--surface2)}
       .slice(-6)
       .map(([,v])=>v);
   }
-  
-  // OPay
+
+  // ========================
+  // OPAY PARSER (improved)
+  // ========================
   function parseOpayLayout(pages, fullText){
     const monthly={};
     const nameM=fullText.match(/Account Name\s+Account Number[^\n]*\n([A-Z][A-Z ]+[A-Z])/)||
                 fullText.match(/Account Name\s*\n([A-Z][A-Z ]+[A-Z])/i)||
                 fullText.match(/ACCOUNT NAME[:\s]+([A-Z][A-Z ]+[A-Z])/i);
     const accountName=(nameM?nameM[1]:'').trim();
-  
+
     const rows=[];
     let stop=false;
     for(const page of pages){
@@ -688,10 +915,10 @@ select option{background:var(--surface2)}
       }
       if(stop)break;
     }
-  
+
     const DATE_RE=/(\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(20\d{2})/i;
     let currentYM=null;
-  
+
     for(let i=0;i<rows.length;i++){
       const row=rows[i];
       const dm=DATE_RE.exec(row.text);
@@ -699,41 +926,50 @@ select option{background:var(--surface2)}
         const mo=MONTH_MAP[dm[2].toLowerCase()];
         if(mo)currentYM=dm[3]+'-'+String(mo).padStart(2,'0');
       }
-  
+
       const amt=extractOpayCreditAmountFromRow(row);
       if(!amt||!currentYM)continue;
-  
+
       const context=getOpayContextWindow(rows,i);
       addCreditClassified(monthly,currentYM,amt,context,accountName,context);
     }
-  
+
+    // ✅ IMPROVED FALLBACK: if OPay spatial parser got nothing, try normalised text
+    if(!ok(monthly)){
+      const normalizedFull=normalizeText(fullText);
+      return processNormalizedTextFallback(normalizedFull,'OPAY_KUDA',accountName);
+    }
+
     return monthly;
   }
+
   function extractOpayCreditAmountFromRow(row){
     if(!row||!row.items||!row.items.length)return null;
-  
+
     const dashXs=row.items.filter(item=>(item.str||'').trim()==='--').map(item=>item.x).sort((a,b)=>a-b);
     const nums=row.items
       .filter(item=>/^[\d,]+\.\d{2}$/.test((item.str||'').trim()))
       .map(item=>({x:item.x,value:parseFloat(item.str.replace(/,/g,''))}))
       .sort((a,b)=>a.x-b.x);
-  
+
     if(!dashXs.length||nums.length<2)return null;
-  
+
     const balance=nums[nums.length-1];
     const amount=[...nums].reverse().find(n=>n.x<balance.x-8);
     if(!amount)return null;
     const dash=dashXs.find(x=>x<balance.x-8);
     if(dash==null)return null;
-  
+
     return dash<amount.x&&amount.x<balance.x?amount.value:null;
   }
+
   function rowHasOpayAmountColumns(row){
     if(!row||!row.items)return false;
     const dashCount=row.items.filter(item=>(item.str||'').trim()==='--').length;
     const numCount=row.items.filter(item=>/^[\d,]+\.\d{2}$/.test((item.str||'').trim())).length;
     return dashCount>0&&numCount>=2;
   }
+
   function getOpayContextWindow(rows,index){
     const parts=[];
     for(let j=Math.max(0,index-2);j<=Math.min(rows.length-1,index+1);j++){
@@ -742,8 +978,10 @@ select option{background:var(--surface2)}
     }
     return parts.join(' ');
   }
-  
-  // Generic table parser
+
+  // ========================
+  // GENERIC TABLE PARSER (improved)
+  // ========================
   function buildTransactionBlocks(pages){
     const blocks=[];
     const dateRe=/^\d{2}[\/-]\d{2}[\/-](?:20)?\d{2,4}$/;
@@ -766,6 +1004,7 @@ select option{background:var(--surface2)}
     }
     return blocks;
   }
+
   function getYmFromDate(dateStr){
     let m=/^(\d{2})\/(\d{2})\/(20\d{2})$/.exec(dateStr);
     if(m)return `${m[3]}-${m[1]}`;
@@ -775,39 +1014,45 @@ select option{background:var(--surface2)}
     if(m)return `20${m[3]}-${m[1]}`;
     return null;
   }
+
   function parseAmountToken(str){
     if(!/^[+-]?[\d,]+\.\d{2}$/.test(str||''))return null;
     return parseFloat(str.replace(/[+,]/g,''));
   }
+
   function parseGenericMoneyInTable(pages, fullText, bankHint=''){
     const monthly={};
     const blocks=buildTransactionBlocks(pages);
     const nameM=fullText.match(/(?:Account Statement\s*)?Name\s+([A-Z][A-Z\s]{4,})/i)||
                 fullText.match(/Account Name[:\s]+([A-Z][A-Z\s]{4,})/i);
     const accountName=nameM?nameM[1].trim():'';
-  
+
     for(const block of blocks){
       const firstDate=block.items.find(it=>/^\d{2}[\/-]\d{2}[\/-](?:20)?\d{2,4}$/.test(it.str))?.str;
       const ym=getYmFromDate(firstDate);
       if(!ym)continue;
-  
+
       const text=block.lines.join(' ');
       const lower=text.toLowerCase();
       if(lower.includes('transaction date')&&lower.includes('transaction detail'))continue;
-  
+
+      // Skip header/balance rows
+      if(shouldIgnoreLine(text))continue;
+      if(isRecycledTransaction(text))continue;
+
       let credit=null;
       for(const item of block.items){
         const amt=parseAmountToken(item.str);
         if(amt===null)continue;
         if(item.str.startsWith('+')){credit=amt;break;}
       }
-  
+
       if(credit===null){
         const positives=block.items
           .map(it=>({amt:parseAmountToken(it.str),x:it.x,str:it.str}))
           .filter(v=>v.amt!==null&&v.amt>0&&!v.str.startsWith('-'))
           .sort((a,b)=>a.x-b.x);
-  
+
         if(positives.length===1){
           credit=positives[0].amt;
         }else if(positives.length>=2){
@@ -818,100 +1063,100 @@ select option{background:var(--surface2)}
           }
         }
       }
-  
+
       if(!credit||credit<=0)continue;
       addCreditClassified(monthly,ym,credit,text,accountName,text);
     }
-  
+
     return monthly;
   }
-  
-  // PalmPay
+
+  // ========================
+  // PALMPAY PARSERS
+  // ========================
   function parsePalmPay(pages, fullText){
-  const monthly=parsePalmPayStatementText(fullText);
-  if(ok(monthly))return monthly;
-
-  const fallback=parsePalmPayNewFormat(pages, fullText);
-  if(ok(fallback))return fallback;
-
-  return {};
-}
-
-function parsePalmPayStatementText(fullText){
-  const monthly={};
-  const nameM=fullText.match(/Account Statement\s*Name\s+([A-Z][A-Z\s]{4,})/i) ||
-              fullText.match(/Account Name[:\s]+([A-Z][A-Z\s]{4,})/i) ||
-              fullText.match(/Name\s+([A-Z][A-Z\s]{4,})/i);
-  const accountName=nameM?nameM[1].trim():'';
-
-  const normalized=(fullText||'')
-    .replace(/\s+/g,' ')
-    .replace(/([AP]M)(Received|Send|Top up|Buy|Stamp|Disbursement|Repayment|Electronic)/g,'$1 $2');
-
-  const starts=[...normalized.matchAll(/\d{2}\/\d{2}\/20\d{2}\s+\d{2}:\d{2}:\d{2}\s+(?:AM|PM)/g)];
-  if(!starts.length)return {};
-
-  for(let i=0;i<starts.length;i++){
-    const start=starts[i].index;
-    const end=i<starts.length-1?starts[i+1].index:normalized.length;
-    const block=normalized.slice(start,end).trim();
-    if(!block)continue;
-
-    const dm=/^(\d{2})\/(\d{2})\/(20\d{2})/.exec(block);
-    if(!dm)continue;
-    const ym=`${dm[3]}-${dm[1]}`;
-
-    const amtM=/\+\s*([\d,]+\.\d{2})\b/.exec(block);
-    if(!amtM)continue;
-
-    const amount=parseFloat(amtM[1].replace(/,/g,''));
-    if(!(amount>0))continue;
-
-    addCreditClassified(monthly,ym,amount,block,accountName,block);
+    const monthly=parsePalmPayStatementText(fullText);
+    if(ok(monthly))return monthly;
+    const fallback=parsePalmPayNewFormat(pages,fullText);
+    if(ok(fallback))return fallback;
+    return {};
   }
 
-  return monthly;
-}
+  function parsePalmPayStatementText(fullText){
+    const monthly={};
+    const nameM=fullText.match(/Account Statement\s*Name\s+([A-Z][A-Z\s]{4,})/i)||
+                fullText.match(/Account Name[:\s]+([A-Z][A-Z\s]{4,})/i)||
+                fullText.match(/Name\s+([A-Z][A-Z\s]{4,})/i);
+    const accountName=nameM?nameM[1].trim():'';
 
-function parsePalmPayNewFormat(pages, fullText){
-  const monthly={};
-  const nameM=fullText.match(/(?:Account Name|Name)\s*[:\n]\s*([A-Z ]{4,})/i);
-  const accountName=nameM?nameM[1].trim():'';
+    const normalized=(fullText||'')
+      .replace(/\s+/g,' ')
+      .replace(/([AP]M)(Received|Send|Top up|Buy|Stamp|Disbursement|Repayment|Electronic)/g,'$1 $2');
 
-  const normalized=(fullText||'')
-    .replace(/\s+/g,' ')
-    .replace(/([AP]M)(Received|Send|Top up|Buy|Stamp|Disbursement|Repayment|Electronic)/g,'$1 $2');
+    const starts=[...normalized.matchAll(/\d{2}\/\d{2}\/20\d{2}\s+\d{2}:\d{2}:\d{2}\s+(?:AM|PM)/g)];
+    if(!starts.length)return {};
 
-  const starts=[...normalized.matchAll(/\d{2}\/\d{2}\/20\d{2}\s+\d{2}:\d{2}:\d{2}\s+(?:AM|PM)/g)];
-  if(!starts.length)return {};
+    for(let i=0;i<starts.length;i++){
+      const start=starts[i].index;
+      const end=i<starts.length-1?starts[i+1].index:normalized.length;
+      const block=normalized.slice(start,end).trim();
+      if(!block)continue;
 
-  let creditCount=0;
-  for(let i=0;i<starts.length;i++){
-    const start=starts[i].index;
-    const end=i<starts.length-1?starts[i+1].index:normalized.length;
-    const block=normalized.slice(start,end).trim();
-    if(!block)continue;
+      const dm=/^(\d{2})\/(\d{2})\/(20\d{2})/.exec(block);
+      if(!dm)continue;
+      const ym=`${dm[3]}-${dm[1]}`;
 
-    const dm=/^(\d{2})\/(\d{2})\/(20\d{2})/.exec(block);
-    if(!dm)continue;
-    const ym=`${dm[3]}-${dm[1]}`;
+      const amtM=/\+\s*([\d,]+\.\d{2})\b/.exec(block);
+      if(!amtM)continue;
 
-    const amtM=/\+\s*([\d,]+\.\d{2})\b/.exec(block);
-    if(!amtM)continue;
+      const amount=parseFloat(amtM[1].replace(/,/g,''));
+      if(!(amount>0))continue;
 
-    const amt=parseFloat(amtM[1].replace(/,/g,''));
-    if(amt>0){
-      addCreditClassified(monthly,ym,amt,block,accountName,block);
-      creditCount++;
+      addCreditClassified(monthly,ym,amount,block,accountName,block);
     }
+    return monthly;
   }
 
-  if(creditCount<3)return {};
-  return monthly;
-}
+  function parsePalmPayNewFormat(pages, fullText){
+    const monthly={};
+    const nameM=fullText.match(/(?:Account Name|Name)\s*[:\n]\s*([A-Z ]{4,})/i);
+    const accountName=nameM?nameM[1].trim():'';
 
-  
-  // Detection + parsers
+    const normalized=(fullText||'')
+      .replace(/\s+/g,' ')
+      .replace(/([AP]M)(Received|Send|Top up|Buy|Stamp|Disbursement|Repayment|Electronic)/g,'$1 $2');
+
+    const starts=[...normalized.matchAll(/\d{2}\/\d{2}\/20\d{2}\s+\d{2}:\d{2}:\d{2}\s+(?:AM|PM)/g)];
+    if(!starts.length)return {};
+
+    let creditCount=0;
+    for(let i=0;i<starts.length;i++){
+      const start=starts[i].index;
+      const end=i<starts.length-1?starts[i+1].index:normalized.length;
+      const block=normalized.slice(start,end).trim();
+      if(!block)continue;
+
+      const dm=/^(\d{2})\/(\d{2})\/(20\d{2})/.exec(block);
+      if(!dm)continue;
+      const ym=`${dm[3]}-${dm[1]}`;
+
+      const amtM=/\+\s*([\d,]+\.\d{2})\b/.exec(block);
+      if(!amtM)continue;
+
+      const amt=parseFloat(amtM[1].replace(/,/g,''));
+      if(amt>0){
+        addCreditClassified(monthly,ym,amt,block,accountName,block);
+        creditCount++;
+      }
+    }
+
+    if(creditCount<3)return {};
+    return monthly;
+  }
+
+  // ========================
+  // BANK DETECTION
+  // ========================
   function detectBank(text){
     const t=text.toLowerCase();
     const aliasMap=[
@@ -944,7 +1189,7 @@ function parsePalmPayNewFormat(pages, fullText){
       ['Carbon',['carbon']],
       ['Branch',['branch']]
     ];
-  
+
     for(const [bank,keys] of aliasMap){
       if(bank==='PalmPay'){
         if(t.includes('palmpay')||
@@ -957,14 +1202,21 @@ function parsePalmPayNewFormat(pages, fullText){
     if(t.includes('moniepoint')&&t.includes('account statement')&&t.includes('settlement'))return 'Moniepoint';
     return 'Unknown Bank';
   }
-  function parseMoniepoint(pages,fullText){
+
+  // ========================
+  // MONIEPOINT PARSER (improved)
+  // ========================
+  function parseMoniepoint(pages, fullText){
     const monthly={};
     let currentYM=null;
     const nameM=fullText.match(/Account\s*Name[:\s]+([A-Z ]{4,})/i);
     const accountName=nameM?nameM[1].trim():'';
+
     for(const {lines} of pages){
       for(let i=0;i<lines.length;i++){
         const stripped=lines[i].text.trim();
+
+        // Detect year header line (e.g. "2024-")
         const yearOnly=/^(20\d{2})-$/.exec(stripped);
         if(yearOnly){
           const yr=yearOnly[1];
@@ -974,26 +1226,63 @@ function parsePalmPayNewFormat(pages, fullText){
           }
           continue;
         }
+
+        // Also detect YYYY-MM month headers directly
+        const ymHeader=/^(20\d{2})-(\d{2})$/.exec(stripped);
+        if(ymHeader){currentYM=`${ymHeader[1]}-${ymHeader[2]}`;continue;}
+
         if(!currentYM)continue;
+
         const lt=lines[i].text;
-        if(lt.length<80)continue;
-        const nums=[];let m;const nr=/[\d,]+\.\d{2}/g;
+
+        // Skip lines that are too short to be transactions
+        if(lt.length<60)continue;
+
+        // Skip non-transaction lines
+        if(shouldIgnoreLine(lt))continue;
+
+        const nums=[];let m;
+        const nr=/[\d,]+\.\d{2}/g;
         while((m=nr.exec(lt))!==null)nums.push(parseFloat(m[0].replace(/,/g,'')));
+
         let credit=null;
+
+        // Standard Moniepoint layout: [debit=0, credit>0, balance]
         if(nums.length>=5&&nums[1]===0&&nums[2]>0)credit=nums[2];
         else if(nums.length===4&&nums[0]===0&&nums[1]>0)credit=nums[1];
-        if(credit)addCreditClassified(monthly,currentYM,credit,lt,accountName,lt);
+        // ✅ NEW: Also handle V2 format where credit is just second-to-last
+        else if(nums.length>=3){
+          const candidate=nums[nums.length-2];
+          if(candidate>0)credit=candidate;
+        }
+
+        if(credit&&!shouldIgnoreLine(lt))
+          addCreditClassified(monthly,currentYM,credit,lt,accountName,lt);
       }
     }
+
+    // ✅ IMPROVED FALLBACK for Moniepoint: normalised text pipeline
+    if(!ok(monthly)){
+      const normalizedFull=normalizeText(fullText);
+      return processNormalizedTextFallback(normalizedFull,'MONIEPOINT_V2',accountName);
+    }
+
     return monthly;
   }
+
+  // ========================
+  // KUDA PARSER
+  // ========================
   function parseKudaLayout(pages){
     const monthly={};
     const DATE_RE=/^(\d{2})\/(\d{2})\/(\d{2,4})$/;
-    const AMT_RE=/^\u20a6([\d,]+\.\d{2})$/;
+    const AMT_RE=/^₦([\d,]+\.\d{2})$/;
     const CBN_SKIP=['stamp duty','levy','duty'];
+
     for(const {lines} of pages){
       let moneyInMaxX=160;
+
+      // Find column boundary from header row
       for(const line of lines){
         const txt=line.text.toLowerCase();
         if(txt.includes('money in')&&txt.includes('money out')){
@@ -1003,18 +1292,23 @@ function parsePalmPayNewFormat(pages, fullText){
           break;
         }
       }
+
       let currentYM=null;
       for(const line of lines){
         const items=line.items;
         if(!items.length)continue;
+
         const dm=DATE_RE.exec(items[0].str.trim());
         if(dm){
-          const[, ,mon,yr]=dm;
+          const[,,mon,yr]=dm;
           const fy=yr.length===4?yr:'20'+yr;
           currentYM=`${fy}-${mon.padStart(2,'0')}`;
         }
+
         if(!currentYM)continue;
         if(CBN_SKIP.some(s=>line.text.toLowerCase().includes(s)))continue;
+        if(shouldIgnoreLine(line.text))continue;
+
         for(const item of items){
           const am=AMT_RE.exec(item.str.trim());
           if(am&&item.x<moneyInMaxX){
@@ -1024,8 +1318,19 @@ function parsePalmPayNewFormat(pages, fullText){
         }
       }
     }
+
+    // ✅ IMPROVED: if Kuda spatial parser fails, try normalised fallback
+    if(!ok(monthly)){
+      const fullText=pages.map(p=>p.raw||p.lines.map(l=>l.text).join(' ')).join('\n');
+      return processNormalizedTextFallback(normalizeText(fullText),'KUDA','');
+    }
+
     return monthly;
   }
+
+  // ========================
+  // SUMMARY TABLE PARSERS
+  // ========================
   function parseMBSSummaryTable(fullText){
     const monthly={};
     const flat=fullText.replace(/\r?\n/g,' ').replace(/\s+/g,' ');
@@ -1043,6 +1348,7 @@ function parsePalmPayNewFormat(pages, fullText){
     }
     return monthly;
   }
+
   function parseSummaryTable(fullText){
     const monthly={};
     const tokens=fullText.replace(/\n/g,' ').replace(/\s+/g,' ').split(' ');
@@ -1065,6 +1371,7 @@ function parsePalmPayNewFormat(pages, fullText){
     }
     return monthly;
   }
+
   function parseRowTransaction(rawPages){
     const monthly={};
     const ML={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
@@ -1072,30 +1379,34 @@ function parsePalmPayNewFormat(pages, fullText){
       let m;
       const ap=/(\d{2})-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-(\d{2})\s+((?:(?!\d[\d,]*\.\d{2}).)*?)-\s+([\d,]+\.\d{2})/gi;
       while((m=ap.exec(text))!==null){
-        const[, ,mon,yr,desc,amt]=m;
+        const[,,mon,yr,desc,amt]=m;
         const mo=ML[mon.toLowerCase().slice(0,3)];
         if(!mo)continue;
         const ym='20'+yr+'-'+String(mo).padStart(2,'0');
-        addCreditClassified(monthly,ym,parseFloat(amt.replace(/,/g,'')),desc,'',desc);
+        if(!shouldIgnoreLine(desc)&&!isRecycledTransaction(desc))
+          addCreditClassified(monthly,ym,parseFloat(amt.replace(/,/g,'')),desc,'',desc);
       }
       const gp=/(\d{2})\/(\d{2})\/(20\d{2})\s+((?:(?!\d[\d,]*\.\d{2}).)*?)(?:\d[\d,]*\.\d{2}\s+)?-\s+([\d,]+\.\d{2})/g;
       while((m=gp.exec(text))!==null){
-        const[, ,mon,yr,desc,amt]=m;
+        const[,,mon,yr,desc,amt]=m;
         const ym=`${yr}-${String(parseInt(mon,10)).padStart(2,'0')}`;
-        addCreditClassified(monthly,ym,parseFloat(amt.replace(/,/g,'')),desc,'',desc);
+        if(!shouldIgnoreLine(desc)&&!isRecycledTransaction(desc))
+          addCreditClassified(monthly,ym,parseFloat(amt.replace(/,/g,'')),desc,'',desc);
       }
     }
     return monthly;
   }
-  
-  // Fill UI
+
+  // ========================
+  // UI: FILL INFLOW FIELDS
+  // ========================
   function fillInflowFields(data){
     const previewRows=document.getElementById('pdf-preview-rows');
-  
+
     const hasNonUsable=data.some(v=>(v.internalMove||0)+(v.recycleFunds||0)>0);
     const hasInternal=data.some(v=>(v.selfTransfer||0)>0);
     const hasObligation=data.some(v=>(v.loanDisbursement||0)>0);
-  
+
     let tableHtml=`<table class="preview-table"><thead><tr>
       <th>Month</th>
       <th class="col-gross">Total Inflow</th>
@@ -1104,26 +1415,26 @@ function parsePalmPayNewFormat(pages, fullText){
       ${hasObligation?'<th class="col-obligation">External Obligations</th>':''}
       <th class="col-net">Eligible Income</th>
     </tr></thead><tbody>`;
-  
+
     let tGross=0,tNonUsable=0,tInternal=0,tObligation=0,tNet=0;
-  
+
     data.forEach((v,idx)=>{
       const nonUsable=(v.internalMove||0)+(v.recycleFunds||0);
       const internal=(v.selfTransfer||0);
       const obligation=(v.loanDisbursement||0);
       const eligible=Math.max(v.gross-nonUsable-internal-obligation,0);
       tGross+=v.gross;tNonUsable+=nonUsable;tInternal+=internal;tObligation+=obligation;tNet+=eligible;
-  
+
       const dash='<span style="color:var(--muted)">—</span>';
       tableHtml+=`<tr>
         <td>${v.label}</td>
-        <td class="col-gross">\u20a6${Math.round(v.gross).toLocaleString('en-NG')}</td>
-        ${hasNonUsable?`<td class="col-nousable">${nonUsable>0?'\u2212\u20a6'+Math.round(nonUsable).toLocaleString('en-NG'):dash}</td>`:''}
-        ${hasInternal?`<td class="col-internal">${internal>0?'\u2212\u20a6'+Math.round(internal).toLocaleString('en-NG'):dash}</td>`:''}
-        ${hasObligation?`<td class="col-obligation">${obligation>0?'\u2212\u20a6'+Math.round(obligation).toLocaleString('en-NG'):dash}</td>`:''}
-        <td class="col-net">\u20a6${Math.round(eligible).toLocaleString('en-NG')}</td>
+        <td class="col-gross">₦${Math.round(v.gross).toLocaleString('en-NG')}</td>
+        ${hasNonUsable?`<td class="col-nousable">${nonUsable>0?'−₦'+Math.round(nonUsable).toLocaleString('en-NG'):dash}</td>`:''}
+        ${hasInternal?`<td class="col-internal">${internal>0?'−₦'+Math.round(internal).toLocaleString('en-NG'):dash}</td>`:''}
+        ${hasObligation?`<td class="col-obligation">${obligation>0?'−₦'+Math.round(obligation).toLocaleString('en-NG'):dash}</td>`:''}
+        <td class="col-net">₦${Math.round(eligible).toLocaleString('en-NG')}</td>
       </tr>`;
-  
+
       const totalDeduct=nonUsable+internal+obligation;
       const inflowEl=document.getElementById('inflow-'+(idx+1));
       const recycleEl=document.getElementById('recycle-'+(idx+1));
@@ -1135,17 +1446,17 @@ function parsePalmPayNewFormat(pages, fullText){
       if(lblEl)lblEl.textContent=v.label;
       updateRecycleRow(idx+1);
     });
-  
+
     const dash='<span style="color:var(--muted)">—</span>';
     tableHtml+=`</tbody><tfoot><tr>
       <td style="color:var(--muted);font-size:10px;letter-spacing:1px;text-transform:uppercase">Total</td>
-      <td class="col-gross">\u20a6${Math.round(tGross).toLocaleString('en-NG')}</td>
-      ${hasNonUsable?`<td class="col-nousable">${tNonUsable>0?'\u2212\u20a6'+Math.round(tNonUsable).toLocaleString('en-NG'):dash}</td>`:''}
-      ${hasInternal?`<td class="col-internal">${tInternal>0?'\u2212\u20a6'+Math.round(tInternal).toLocaleString('en-NG'):dash}</td>`:''}
-      ${hasObligation?`<td class="col-obligation">${tObligation>0?'\u2212\u20a6'+Math.round(tObligation).toLocaleString('en-NG'):dash}</td>`:''}
-      <td class="col-net">\u20a6${Math.round(tNet).toLocaleString('en-NG')}</td>
+      <td class="col-gross">₦${Math.round(tGross).toLocaleString('en-NG')}</td>
+      ${hasNonUsable?`<td class="col-nousable">${tNonUsable>0?'−₦'+Math.round(tNonUsable).toLocaleString('en-NG'):dash}</td>`:''}
+      ${hasInternal?`<td class="col-internal">${tInternal>0?'−₦'+Math.round(tInternal).toLocaleString('en-NG'):dash}</td>`:''}
+      ${hasObligation?`<td class="col-obligation">${tObligation>0?'−₦'+Math.round(tObligation).toLocaleString('en-NG'):dash}</td>`:''}
+      <td class="col-net">₦${Math.round(tNet).toLocaleString('en-NG')}</td>
     </tr></tfoot></table>`;
-  
+
     tableHtml+=`<div class="legend">
       <span class="legend-pill pill-gross">Total Inflow = all credits received</span>
       ${hasNonUsable?'<span class="legend-pill pill-nousable">Non-Usable = OWealth round-trips &amp; betting winbacks</span>':''}
@@ -1153,10 +1464,10 @@ function parsePalmPayNewFormat(pages, fullText){
       ${hasObligation?'<span class="legend-pill pill-obligation">External Obligations = loan disbursals (OKash, EaseMoni, Renmoney…)</span>':''}
       <span class="legend-pill pill-net">Eligible Income = verified usable income for underwriting</span>
     </div>`;
-  
+
     previewRows.innerHTML=tableHtml;
     document.getElementById('pdf-preview').style.display='block';
-  
+
     const tot={internalMove:0,selfTransfer:0,loanDisbursement:0,recycleFunds:0};
     data.forEach(v=>{
       tot.internalMove+=(v.internalMove||0);
@@ -1164,21 +1475,21 @@ function parsePalmPayNewFormat(pages, fullText){
       tot.loanDisbursement+=(v.loanDisbursement||0);
       tot.recycleFunds+=(v.recycleFunds||0);
     });
-  
+
     const totalDeducted=tot.internalMove+tot.selfTransfer+tot.loanDisbursement+tot.recycleFunds;
     if(totalDeducted>0){
       document.getElementById('recycle-panel').style.display='block';
       let html='';
-      if(tot.internalMove>0)html+=`<div class="recycle-row"><span>Non-Usable — OWealth / Internal Wallet Round-Trips</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.internalMove).toLocaleString('en-NG')}</span></div>`;
-      if(tot.recycleFunds>0)html+=`<div class="recycle-row"><span>Non-Usable — Betting / Gambling Winbacks</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.recycleFunds).toLocaleString('en-NG')}</span></div>`;
-      if(tot.selfTransfer>0)html+=`<div class="recycle-row"><span>Internal Movements — Own-Name Transfers (other banks → this account)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.selfTransfer).toLocaleString('en-NG')}</span></div>`;
-      if(tot.loanDisbursement>0)html+=`<div class="recycle-row"><span>External Obligations — Loan Disbursals (OKash, EaseMoni, Renmoney…)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.loanDisbursement).toLocaleString('en-NG')}</span></div>`;
-      html+=`<div class="recycle-row"><span>Total Non-Eligible Deductions</span><span>\u2212\u20a6${Math.round(totalDeducted).toLocaleString('en-NG')}</span></div>`;
+      if(tot.internalMove>0)html+=`<div class="recycle-row"><span>Non-Usable — OWealth / Internal Wallet Round-Trips</span><span style="color:var(--orange)">−₦${Math.round(tot.internalMove).toLocaleString('en-NG')}</span></div>`;
+      if(tot.recycleFunds>0)html+=`<div class="recycle-row"><span>Non-Usable — Betting / Gambling Winbacks</span><span style="color:var(--orange)">−₦${Math.round(tot.recycleFunds).toLocaleString('en-NG')}</span></div>`;
+      if(tot.selfTransfer>0)html+=`<div class="recycle-row"><span>Internal Movements — Own-Name Transfers (other banks → this account)</span><span style="color:var(--orange)">−₦${Math.round(tot.selfTransfer).toLocaleString('en-NG')}</span></div>`;
+      if(tot.loanDisbursement>0)html+=`<div class="recycle-row"><span>External Obligations — Loan Disbursals (OKash, EaseMoni, Renmoney…)</span><span style="color:var(--orange)">−₦${Math.round(tot.loanDisbursement).toLocaleString('en-NG')}</span></div>`;
+      html+=`<div class="recycle-row"><span>Total Non-Eligible Deductions</span><span>−₦${Math.round(totalDeducted).toLocaleString('en-NG')}</span></div>`;
       document.getElementById('recycle-rows').innerHTML=html;
     }else{
       document.getElementById('recycle-panel').style.display='none';
     }
   }
-  </script>
-  </body>
-  </html>
+</script>
+</body>
+</html>
