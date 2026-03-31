@@ -95,7 +95,6 @@ select option{background:var(--surface2)}
     <h1>Loan <em>Eligibility</em><br>Calculator</h1>
     <div class="subtitle">All Products &nbsp;|&nbsp; Auto-computes DTI, Repayment, Turnover &amp; Loan Amount &nbsp;|&nbsp; Recycling Detection</div>
   </header>
-
   <div class="section">
     <div class="section-title">00 &#8212; Bank Statement Auto-Fill <span>&#8212; Optional</span></div>
     <p style="font-size:12px;color:var(--muted);margin-bottom:20px">Upload PDF or Mono Excel. Credits are automatically classified into real income vs recycled amounts.</p>
@@ -127,7 +126,6 @@ select option{background:var(--surface2)}
       <div id="pdf-preview-rows"></div>
     </div>
   </div>
-
   <div class="section">
     <div class="section-title">01 &#8212; Monthly Inflows (Last 6 Months)</div>
     <p style="font-size:12px;color:var(--muted);margin-bottom:16px">Gross credits, recycling deductions, and net inflows per month. Net values are used in eligibility calculation.</p>
@@ -148,7 +146,6 @@ select option{background:var(--surface2)}
       <div id="recycle-rows"></div>
     </div>
   </div>
-
   <div class="section">
     <div class="section-title">02 &#8212; Loan Parameters</div>
     <div class="grid-2">
@@ -190,7 +187,6 @@ select option{background:var(--surface2)}
       <span id="calc-btn-text">&#9654; &nbsp; Calculate Eligibility</span>
     </button>
   </div>
-
   <div class="section results" id="results-section">
     <div class="section-title">03 &#8212; Results</div>
     <div class="decision-banner" id="decision-banner"></div>
@@ -220,6 +216,7 @@ select option{background:var(--surface2)}
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
 const MONTH_ABBR={1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'};
 const MONTH_MAP={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
 
@@ -246,8 +243,6 @@ function shouldIgnoreLine(line){
 }
 
 function isRecycledTransaction(line){
-  // NOTE: 'REFUND' intentionally excluded — a refund credit to the account is real income.
-  // Only flag outbound-style patterns that indicate recycling on the debit side.
   const rp=['TRANSFER TO SELF','TRANSFER TO OWN','REVERSAL','RETURNED','CHARGEBACK'];
   const u=line.toUpperCase();
   return rp.some(p=>u.includes(p));
@@ -281,12 +276,13 @@ function extractOpayKuda(line){
   return nums.length<2?0:(nums.find(n=>n>0)||0);
 }
 
+// FIXED: prevents "Cannot read properties of undefined (reading 'trim')"
 function processNormalizedTextFallback(text,format,accountName,existingMonthly){
   if(existingMonthly&&Object.keys(existingMonthly).length>0)return existingMonthly;
   const monthly={};
   const lines=text.split(/(?=\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/20\d{2}|\d{2}-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-\d{2})/i);
   for(const line of lines){
-    if(!line.trim())continue;
+    if(!line || !line.trim()) continue;
     let ym=null;
     const isoM=line.match(/(\d{4})-(\d{2})-\d{2}/);
     if(isoM)ym=`${isoM[1]}-${isoM[2]}`;
@@ -435,50 +431,7 @@ function runCalculation(){
   }else{reqSec.style.display='none';}
 }
 
-// ── FILE HANDLING ──────────────────────────────────────────────────────────
-let currentFile=null;
-function handleDragOver(e){e.preventDefault();document.getElementById('drop-zone').classList.add('drag-over');}
-function handleDragLeave(){document.getElementById('drop-zone').classList.remove('drag-over');}
-function handleDrop(e){
-  e.preventDefault();document.getElementById('drop-zone').classList.remove('drag-over');
-  const f=e.dataTransfer.files[0];
-  if(f&&(f.name.toLowerCase().endsWith('.pdf')||f.name.toLowerCase().match(/\.xlsx?$/)))setFile(f);
-  else showStatus('Please drop a valid PDF or XLSX file.','error');
-}
-function handleFileSelect(e){const f=e.target.files[0];if(f)setFile(f);}
-function setFile(f){
-  currentFile=f;
-  const isXL=f.name.toLowerCase().match(/\.xlsx?$/);
-  document.getElementById('drop-icon').textContent='OK';document.getElementById('drop-icon').style.color='var(--green)';
-  document.getElementById('drop-label').innerHTML='<span style="color:var(--green);font-weight:700">'+f.name+'</span>';
-  document.getElementById('drop-sub').textContent=(f.size/1024).toFixed(0)+' KB — '+(isXL?'Mono Excel':'PDF')+' — Ready to Extract';
-  document.getElementById('drop-zone').style.borderColor='var(--green)';hideStatus();
-}
-function showStatus(msg,type){
-  const el=document.getElementById('pdf-status');el.style.display='block';
-  el.style.background=type==='error'?'rgba(255,68,68,.08)':type==='success'?'rgba(0,230,118,.08)':'rgba(0,212,255,.08)';
-  el.style.border='1px solid '+(type==='error'?'rgba(255,68,68,.3)':type==='success'?'rgba(0,230,118,.3)':'rgba(0,212,255,.3)');
-  el.style.color=type==='error'?'var(--red)':type==='success'?'var(--green)':'var(--accent)';el.textContent=msg;
-}
-function hideStatus(){document.getElementById('pdf-status').style.display='none';}
-
-async function extractBankStatement(){
-  if(!currentFile){showStatus('Please select a PDF or XLSX file first.','error');return;}
-  showStatus('Extracting monthly credits...','info');
-  document.getElementById('extract-spinner').style.display='block';
-  document.getElementById('extract-btn-text').textContent='Extracting...';
-  try{
-    if(currentFile.name.toLowerCase().match(/\.xlsx?$/))await extractExcel(currentFile);
-    else await extractPDF(currentFile);
-  }catch(err){showStatus('Error: '+err.message,'error');console.error(err);}
-  finally{document.getElementById('extract-spinner').style.display='none';document.getElementById('extract-btn-text').textContent='Extract Monthly Credits';}
-}
-
-// ── CREDIT CLASSIFICATION ─────────────────────────────────────────────────
-// FIX: selfTransfer now requires an explicit "transfer from" verb in the narration.
-// Previously, any narration containing the account holder's name (even in a
-// reference code like "AP_TRSF|...|..._BMADU_STANDARD_CREDIT_0") would be
-// mis-classified as selfTransfer, causing massive over-deduction.
+// CREDIT CLASSIFICATION
 function classifyCredit(currentLine,fullContext,accountHolderName){
   const cl=(currentLine||'').toLowerCase();
   const ctx=(fullContext||'').toLowerCase();
@@ -486,8 +439,6 @@ function classifyCredit(currentLine,fullContext,accountHolderName){
   if(cl.includes('owealth withdrawal')||cl.includes('owealth deposit')||cl.includes('owealth interest')||cl.includes('auto-save to owealth')||cl.includes('savings withdrawal')||cl.includes('owealth balance'))return 'internalMove';
   const loanKw=['okash','easemoni','fairmoney','renmoney','palmcredit','branch loan','carbon ','migo ','lidya ','zedvance','creditwave','quickcheck','loan disburs','credit disburs','disbursement'];
   if(loanKw.some(k=>ctx.includes(k)))return 'loanDisbursement';
-  // selfTransfer: ONLY flag when a "transfer from <own name>" pattern is explicitly present.
-  // A name appearing in a reference/system code is NOT a self-transfer.
   if(name&&name.length>4){
     const nameParts=name.split(/\s+/).filter(p=>p.length>3);
     const hasSelfTransferVerb=/\b(transfer\s+from|from\s+self|from\s+own)\b/.test(ctx);
@@ -507,7 +458,7 @@ function addCreditClassified(monthly,ym,amount,contextWindow,accountHolderName,c
 
 function ymToLabel(ym){const[yr,mo]=ym.split('-');return MONTH_ABBR[parseInt(mo,10)]+' '+yr.slice(2);}
 
-// ── EXCEL PARSER ─────────────────────────────────────────────────────────
+// EXCEL PARSER
 async function extractExcel(file){
   const ab=await file.arrayBuffer();
   const wb=XLSX.read(ab,{type:'array',cellDates:true});
@@ -543,7 +494,7 @@ async function extractExcel(file){
   showStatus('Extracted '+sorted.length+' months from Mono Excel statement','success');
 }
 
-// ── PDF EXTRACTION ────────────────────────────────────────────────────────
+// PDF EXTRACTION (with the two safety fixes)
 async function extractPDF(file){
   const password=document.getElementById('pdf-password').value||'';
   try{
@@ -593,7 +544,8 @@ async function extractPDF(file){
     if(!ok(monthly))monthly=parseRowTransaction(pages.map(p=>p.raw));
     if(!ok(monthly)){
       const nameM=fullText.match(/Account(?:\s+Name)?[:\s]+([A-Z][A-Z\s]{4,})/i);
-      monthly=processNormalizedTextFallback(normalizedFull,format,nameM?nameM[1].trim():'',monthly);
+      const accountName = nameM && nameM[1] ? nameM[1].trim() : '';
+      monthly=processNormalizedTextFallback(normalizedFull,format,accountName,monthly);
     }
     const sorted=buildSortedMonths(monthly);
     if(!sorted.length){showStatus('Could not extract monthly credits. Format may not be supported.','error');return;}
@@ -610,7 +562,7 @@ function buildSortedMonths(monthly){
   return Object.entries(monthly).filter(([,v])=>v.gross>0).sort(([a],[b])=>a.localeCompare(b)).slice(-6).map(([,v])=>v);
 }
 
-// ── OPAY PARSER ───────────────────────────────────────────────────────────
+// OPAY PARSER
 function parseOpayLayout(pages,fullText){
   const monthly={};
   const nameM=fullText.match(/Account Name\s+Account Number[^\n]*\n([A-Z][A-Z ]+[A-Z])/)||fullText.match(/Account Name\s*\n([A-Z][A-Z ]+[A-Z])/i)||fullText.match(/ACCOUNT NAME[:\s]+([A-Z][A-Z ]+[A-Z])/i);
@@ -658,7 +610,7 @@ function getOpayContextWindow(rows,index){
   return parts.join(' ');
 }
 
-// ── GENERIC TABLE PARSER ─────────────────────────────────────────────────
+// GENERIC TABLE PARSER
 function buildTransactionBlocks(pages){
   const blocks=[];const dateRe=/^\d{2}[\/-]\d{2}[\/-](?:20)?\d{2,4}$/;
   for(const page of pages){
@@ -707,7 +659,7 @@ function parseGenericMoneyInTable(pages,fullText,bankHint=''){
   }return monthly;
 }
 
-// ── PALMPAY PARSERS ───────────────────────────────────────────────────────
+// PALMPAY PARSERS
 function parsePalmPay(pages,fullText){
   const monthly=parsePalmPayStatementText(fullText);if(ok(monthly))return monthly;
   const fallback=parsePalmPayNewFormat(pages,fullText);if(ok(fallback))return fallback;
@@ -748,7 +700,7 @@ function parsePalmPayNewFormat(pages,fullText){
   if(creditCount<3)return{};return monthly;
 }
 
-// ── BANK DETECTION ────────────────────────────────────────────────────────
+// BANK DETECTION
 function detectBank(text){
   const t=text.toLowerCase();
   const aliasMap=[
@@ -775,130 +727,59 @@ function detectBank(text){
   return 'Unknown Bank';
 }
 
-// ── MONIEPOINT PARSER — FIXED ─────────────────────────────────────────────
-//
-// BUG (old): isBusiness branch called raw.split('\n'). But pdfjs builds
-//   `raw` by concatenating text items with smart spaces — NO newline chars.
-//   So split('\n') yielded ONE giant string per page. The end-anchor regex
-//   /0\.00\s+(amt)\s+(amt)\s*$/ never matched ($ requires end-of-string/line).
-//   Result: zero credits found → fell back to normalizedText fallback →
-//   classifyCredit mis-flagged "BMADU STANDARD" name fragments in reference
-//   codes as selfTransfer → massive Internal Movements column, wrong months.
-//
-// FIX: use pages[].lines (spatial y-grouped line objects, already built by
-//   the PDF extraction loop). Each line has {text, items[{str, x}]}.
-//   Amounts are located by x-position: Debit≈729, Credit≈784, Balance≈839
-//   on a 928px-wide Moniepoint page. We use 75% of page width as threshold.
-//   Date is tracked from any spatial line containing an ISO timestamp.
-//   This matches exactly how pdfplumber reads the same document spatially.
-//
+// MONIEPOINT PARSER (unchanged)
 function parseMoniepoint(pages,fullText){
   const monthly={};
   const nameM=fullText.match(/(?:Business\s+Name|Account\s*Name)[:\s]+([A-Z][A-Z ]{3,})/i);
   const accountName=nameM?nameM[1].trim():'';
-  // Detect wide-page Moniepoint format (page width ~1829px, iText producer).
-  // Date is split across 3 separate y-lines: "2025-" / "12-" / "26T15:" at far-left.
-  // Amounts: Settlement Debit≈941px, Settlement Credit≈1006px on 1829px page.
-  // State MUST be carried across pages — transactions straddle page breaks.
   const isWide = pages.length > 0 && (pages[0].width || 928) > 1500;
   const isBusiness = !isWide && /20\d\d-\d\d-\d\dT\d\d:/.test(fullText);
-
   if(isWide){
-    // ── WIDE-PAGE MONIEPOINT FORMAT (iText, ~1829px wide) ─────────────
-    // Date is split across lines: "YYYY-" at y=N, "MM-" at y=N+12 (far left x<120).
-    // Amounts at x > 50% of pageWidth: [SettlementDebit, SettlementCredit, BalanceBefore, BalanceAfter]
-    // State is global across all pages to handle cross-page transactions.
-    const IGNORE_KW=['emtl','electronic money transfer levy','stamp duty','vat on',
-                     'sms alert','commission on','annual charge','maintenance fee',
-                     'card maintenance','card issuance'];
+    const IGNORE_KW=['emtl','electronic money transfer levy','stamp duty','vat on','sms alert','commission on','annual charge','maintenance fee','card maintenance','card issuance'];
     const RECYCLE_KW=['reversal','returned','chargeback'];
-
-    // Cross-page state
     let pendingYear=null, pendingMonth=null, wideYM=null;
-
     for(const page of pages){
       const AMT_X=(page.width||1829)*0.50;
-
       for(const line of page.lines){
         const lineText=line.text||'';
-        // Only consider far-left items (x<120) for date fragment detection
         const leftText=(line.items||[]).filter(it=>it.x<120).map(it=>it.str||'').join(' ').trim();
-
-        // Year line: "2025-" at far left
         const yrM=/^(20\d\d)-$/.exec(leftText);
         if(yrM){pendingYear=yrM[1];pendingMonth=null;continue;}
-
-        // Month line: "12-" at far left — must follow a year line
         const moM=/^(\d{2})-$/.exec(leftText);
         if(moM&&pendingYear){pendingMonth=moM[1];wideYM=`${pendingYear}-${pendingMonth}`;continue;}
-
         if(!wideYM)continue;
-
-        // Find amount items in right-side columns (x > 50% of page width)
-        const amtItems=(line.items||[])
-          .filter(it=>it.x>AMT_X&&/^[\d,]+\.\d{2}$/.test((it.str||'').trim()))
-          .map(it=>({x:it.x,value:parseFloat(it.str.replace(/,/g,''))}))
-          .sort((a,b)=>a.x-b.x);  // [SettlementDebit, SettlementCredit, BalBefore, BalAfter]
-
+        const amtItems=(line.items||[]).filter(it=>it.x>AMT_X&&/^[\d,]+\.\d{2}$/.test((it.str||'').trim())).map(it=>({x:it.x,value:parseFloat(it.str.replace(/,/g,''))})).sort((a,b)=>a.x-b.x);
         if(amtItems.length<2)continue;
-        const debit=amtItems[0].value;
-        const credit=amtItems[1].value;
+        const debit=amtItems[0].value; const credit=amtItems[1].value;
         if(debit!==0||credit<=0)continue;
-
         const ll=lineText.toLowerCase();
         if(IGNORE_KW.some(k=>ll.includes(k)))continue;
         if(RECYCLE_KW.some(k=>ll.includes(k)))continue;
-
         addCreditClassified(monthly,wideYM,credit,lineText,accountName,lineText);
       }
     }
-
   }else if(isBusiness){
-    // BUSINESS FORMAT — spatial line iteration (FIXED)
     const IGNORE_KW=['emtl','electronic money transfer levy','stamp duty','vat on','sms alert','commission on','annual charge','maintenance fee','card maintenance','card issuance'];
     const RECYCLE_KW=['reversal','returned','chargeback'];
-
     for(const page of pages){
-      // Moniepoint column layout: Debit≈729px, Credit≈784px, Balance≈839px on 928px page.
-      // Use 75% of page width as the left boundary of the amount zone.
       const AMT_X_THRESHOLD=(page.width||928)*0.75;
       let currentYM=null;
-
       for(const line of page.lines){
         const lineText=line.text||'';
-
-        // Track month — ISO timestamp "2025-09-19T07:" may appear on a line
-        // with or without amounts (date-only lines have no amounts)
         const dateM=lineText.match(/\b(20\d\d)-(\d\d)-\d\dT/);
         if(dateM)currentYM=`${dateM[1]}-${dateM[2]}`;
         if(!currentYM)continue;
-
-        // Extract amount items that fall in the right-side columns (x > threshold)
-        // items are already sorted left-to-right within each spatial line
-        const amountItems=(line.items||[])
-          .filter(item=>item.x>AMT_X_THRESHOLD)
-          .filter(item=>/^[\d,]+\.\d{2}$/.test((item.str||'').trim()))
-          .map(item=>({x:item.x,value:parseFloat(item.str.replace(/,/g,''))}))
-          .sort((a,b)=>a.x-b.x);  // [Debit, Credit, Balance] left-to-right
-
-        // Need at least two columns (debit + credit)
+        const amountItems=(line.items||[]).filter(item=>item.x>AMT_X_THRESHOLD).filter(item=>/^[\d,]+\.\d{2}$/.test((item.str||'').trim())).map(item=>({x:item.x,value:parseFloat(item.str.replace(/,/g,''))})).sort((a,b)=>a.x-b.x);
         if(amountItems.length<2)continue;
-
-        const debit=amountItems[0].value;   // leftmost right-column amount = Debit
-        const credit=amountItems[1].value;  // next = Credit
-
-        // Credit transaction: Debit must be exactly 0, Credit must be positive
+        const debit=amountItems[0].value; const credit=amountItems[1].value;
         if(debit!==0||credit<=0)continue;
-
         const ll=lineText.toLowerCase();
         if(IGNORE_KW.some(k=>ll.includes(k)))continue;
         if(RECYCLE_KW.some(k=>ll.includes(k)))continue;
-
         addCreditClassified(monthly,currentYM,credit,lineText,accountName,lineText);
       }
     }
   }else{
-    // PERSONAL FORMAT — unchanged
     let currentYM=null;
     for(const{lines}of pages){
       for(let i=0;i<lines.length;i++){
@@ -921,15 +802,13 @@ function parseMoniepoint(pages,fullText){
       }
     }
   }
-
-  // Only fall back to normalized text if spatial parser found nothing at all
   if(!ok(monthly)){
     return processNormalizedTextFallback(normalizeText(fullText),'MONIEPOINT_V2',accountName,monthly);
   }
   return monthly;
 }
 
-// ── KUDA PARSER ───────────────────────────────────────────────────────────
+// KUDA PARSER
 function parseKudaLayout(pages){
   const monthly={};const DATE_RE=/^(\d{2})\/(\d{2})\/(\d{2,4})$/;const AMT_RE=/^₦([\d,]+\.\d{2})$/;const CBN_SKIP=['stamp duty','levy','duty'];
   for(const{lines}of pages){
@@ -962,7 +841,7 @@ function parseKudaLayout(pages){
   return monthly;
 }
 
-// ── SUMMARY TABLE PARSERS ─────────────────────────────────────────────────
+// SUMMARY TABLE PARSERS
 function parseMBSSummaryTable(fullText){
   const monthly={};const flat=fullText.replace(/\r?\n/g,' ').replace(/\s+/g,' ');
   const re=/(20\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/gi;
@@ -1010,7 +889,7 @@ function parseRowTransaction(rawPages){
   }return monthly;
 }
 
-// ── UI: FILL INFLOW FIELDS ────────────────────────────────────────────────
+// UI FILL
 function fillInflowFields(data){
   const previewRows=document.getElementById('pdf-preview-rows');
   const hasNonUsable=data.some(v=>(v.internalMove||0)+(v.recycleFunds||0)>0);
@@ -1078,6 +957,44 @@ function fillInflowFields(data){
     html+=`<div class="recycle-row"><span>Total Non-Eligible Deductions</span><span>−₦${Math.round(totalDeducted).toLocaleString('en-NG')}</span></div>`;
     document.getElementById('recycle-rows').innerHTML=html;
   }else{document.getElementById('recycle-panel').style.display='none';}
+}
+
+// FILE HANDLING
+let currentFile=null;
+function handleDragOver(e){e.preventDefault();document.getElementById('drop-zone').classList.add('drag-over');}
+function handleDragLeave(){document.getElementById('drop-zone').classList.remove('drag-over');}
+function handleDrop(e){
+  e.preventDefault();document.getElementById('drop-zone').classList.remove('drag-over');
+  const f=e.dataTransfer.files[0];
+  if(f&&(f.name.toLowerCase().endsWith('.pdf')||f.name.toLowerCase().match(/\.xlsx?$/)))setFile(f);
+  else showStatus('Please drop a valid PDF or XLSX file.','error');
+}
+function handleFileSelect(e){const f=e.target.files[0];if(f)setFile(f);}
+function setFile(f){
+  currentFile=f;
+  const isXL=f.name.toLowerCase().match(/\.xlsx?$/);
+  document.getElementById('drop-icon').textContent='OK';document.getElementById('drop-icon').style.color='var(--green)';
+  document.getElementById('drop-label').innerHTML='<span style="color:var(--green);font-weight:700">'+f.name+'</span>';
+  document.getElementById('drop-sub').textContent=(f.size/1024).toFixed(0)+' KB — '+(isXL?'Mono Excel':'PDF')+' — Ready to Extract';
+  document.getElementById('drop-zone').style.borderColor='var(--green)';hideStatus();
+}
+function showStatus(msg,type){
+  const el=document.getElementById('pdf-status');el.style.display='block';
+  el.style.background=type==='error'?'rgba(255,68,68,.08)':type==='success'?'rgba(0,230,118,.08)':'rgba(0,212,255,.08)';
+  el.style.border='1px solid '+(type==='error'?'rgba(255,68,68,.3)':type==='success'?'rgba(0,230,118,.3)':'rgba(0,212,255,.3)');
+  el.style.color=type==='error'?'var(--red)':type==='success'?'var(--green)':'var(--accent)';el.textContent=msg;
+}
+function hideStatus(){document.getElementById('pdf-status').style.display='none';}
+async function extractBankStatement(){
+  if(!currentFile){showStatus('Please select a PDF or XLSX file first.','error');return;}
+  showStatus('Extracting monthly credits...','info');
+  document.getElementById('extract-spinner').style.display='block';
+  document.getElementById('extract-btn-text').textContent='Extracting...';
+  try{
+    if(currentFile.name.toLowerCase().match(/\.xlsx?$/))await extractExcel(currentFile);
+    else await extractPDF(currentFile);
+  }catch(err){showStatus('Error: '+err.message,'error');console.error(err);}
+  finally{document.getElementById('extract-spinner').style.display='none';document.getElementById('extract-btn-text').textContent='Extract Monthly Credits';}
 }
 </script>
 </body>
