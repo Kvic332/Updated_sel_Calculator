@@ -1345,7 +1345,7 @@ function parseMoniepoint(pages,fullText){
 }
 
 function parseKudaLayout(pages){
-  const strict=parseKudaStructuredStatement(pages);
+  const strict=parseKudaStructuredStatementV2(pages);
   if(ok(strict))return strict;
   const monthly={};
   const DATE_RE=/^(\d{2})\/(\d{2})\/(\d{2,4})$/;
@@ -1409,6 +1409,7 @@ function parseKudaStructuredStatement(pages){
   const monthly={};
   const accountName=extractAccountHolderNameFromPages(pages);
   const seen=new Set();
+  const DATE_START_RE=/^\d{2}\/\d{2}\/\d{2}\b/;
 
   const lines=[];
   for(const page of pages){
@@ -1422,16 +1423,16 @@ function parseKudaStructuredStatement(pages){
 
   let i=0;
   while(i<lines.length){
-    if(!/^\d{2}\/\d{2}\/\d{2}$/.test(lines[i])){i++;continue;}
-    const dateLine=lines[i];
-    const block=[dateLine];
+    if(!DATE_START_RE.test(lines[i])){i++;continue;}
+    const firstLine=lines[i];
+    const block=[firstLine];
     i++;
-    while(i<lines.length&&!/^\d{2}\/\d{2}\/\d{2}$/.test(lines[i])){
+    while(i<lines.length&&!DATE_START_RE.test(lines[i])){
       block.push(lines[i]);
       i++;
     }
 
-    const dateM=/^(\d{2})\/(\d{2})\/(\d{2})$/.exec(dateLine);
+    const dateM=/^(\d{2})\/(\d{2})\/(\d{2})\b/.exec(firstLine);
     if(!dateM)continue;
     const ym=`20${dateM[3]}-${dateM[2]}`;
 
@@ -1464,6 +1465,55 @@ function extractAccountHolderNameFromPages(pages){
     if(/^All Statements$/i.test(firstPage[i])&&firstPage[i+1]&&!/^\d/.test(firstPage[i+1]))return firstPage[i+1];
   }
   return '';
+}
+
+function parseKudaStructuredStatementV2(pages){
+  const monthly={};
+  const accountName=extractAccountHolderNameFromPages(pages);
+  const seen=new Set();
+  const DATE_START_RE=/^\d{2}\/\d{2}\/\d{2}\b/;
+
+  const lines=[];
+  for(const page of pages){
+    for(const line of page.lines||[]){
+      const text=(line.text||'').replace(/\s+/g,' ').trim();
+      if(!text)continue;
+      if(/^All Statements$/i.test(text)||/^Account Number\s*:/.test(text)||/^Page \d+ of \d+$/i.test(text))continue;
+      lines.push(text);
+    }
+  }
+
+  let i=0;
+  while(i<lines.length){
+    if(!DATE_START_RE.test(lines[i])){i++;continue;}
+    const firstLine=lines[i];
+    const block=[firstLine];
+    i++;
+    while(i<lines.length&&!DATE_START_RE.test(lines[i])){
+      block.push(lines[i]);
+      i++;
+    }
+
+    const dateM=/^(\d{2})\/(\d{2})\/(\d{2})\b/.exec(firstLine);
+    if(!dateM)continue;
+    const ym=`20${dateM[3]}-${dateM[2]}`;
+
+    const firstAmounts=[...firstLine.matchAll(/(?:₦|â‚¦)([\d,]+\.\d{2})/g)].map(m=>parseFloat(m[1].replace(/,/g,'')));
+    const amount=firstAmounts[0];
+    if(!(amount>0))continue;
+
+    const blockText=block.join(' ');
+    const lower=blockText.toLowerCase();
+    const isInbound=/\binward\s+transfer\b/.test(lower)||/\blocal\s+funds\s+transfer\b/.test(lower);
+    if(!isInbound)continue;
+
+    const signature=block.slice(0,6).join('|');
+    if(seen.has(signature))continue;
+    seen.add(signature);
+
+    addCreditClassified(monthly,ym,amount,blockText,accountName,blockText);
+  }
+  return monthly;
 }
 
 function parseMBSSummaryTable(fullText){
