@@ -451,6 +451,7 @@ function setFile(f){
   document.getElementById('drop-zone').style.borderColor='var(--green)';
   hideStatus();
   hideValidationReport();
+  clearExtractedPreview();
 }
 function showStatus(msg,type){
   const el=document.getElementById('pdf-status');
@@ -462,6 +463,12 @@ function showStatus(msg,type){
 }
 function hideStatus(){document.getElementById('pdf-status').style.display='none';}
 function hideValidationReport(){document.getElementById('validation-box').style.display='none';}
+function clearExtractedPreview(){
+  document.getElementById('pdf-preview').style.display='none';
+  document.getElementById('pdf-preview-rows').innerHTML='';
+  document.getElementById('recycle-panel').style.display='none';
+  document.getElementById('recycle-rows').innerHTML='';
+}
 function renderValidationReport(report){
   currentExtractionReport=report||null;
   const el=document.getElementById('validation-box');
@@ -488,12 +495,13 @@ async function extractBankStatement(){
   if(!currentFile){showStatus('Please select a PDF or XLSX file first.','error');return;}
   showStatus('Extracting monthly credits...','info');
   hideValidationReport();
+  clearExtractedPreview();
   document.getElementById('extract-spinner').style.display='block';
   document.getElementById('extract-btn-text').textContent='Extracting...';
   try{
     if(currentFile.name.toLowerCase().match(/\.xlsx?$/))await extractExcel(currentFile);
     else await extractPDF(currentFile);
-  }catch(err){hideValidationReport();showStatus('Error: '+err.message,'error');console.error(err);}
+  }catch(err){clearExtractedPreview();hideValidationReport();showStatus('Error: '+err.message,'error');console.error(err);}
   finally{
     document.getElementById('extract-spinner').style.display='none';
     document.getElementById('extract-btn-text').textContent='Extract Monthly Credits';
@@ -517,15 +525,19 @@ function classifyCredit(currentLine,fullContext,accountHolderName){
                 'carbon ','migo ','lidya ','zedvance','creditwave','quickcheck',
                 'loan disburs','credit disburs','disbursement'];
   if(loanKw.some(k=>ctx.includes(k)))return 'loanDisbursement';
+  if(ctx.includes('stamp duty on electronic funds transfer')||ctx.includes('cbn//')&&ctx.includes('stamp duty'))return 'recycleFunds';
   // Self-transfers (account holder's own other bank → this account)
   if(name&&name.length>4){
     const nameParts=name.split(/\s+/).filter(p=>p.length>3);
-    if(nameParts.filter(p=>ctx.includes(p)).length>=2)return 'selfTransfer';
+    const matched=nameParts.filter(p=>ctx.includes(p)).length;
+    const selfTransferVerb=/\b(received from|transfer from|trf from|from)\b/.test(ctx);
+    if(selfTransferVerb&&matched>=2)return 'selfTransfer';
   }
   // Gambling/betting winbacks — unreliable income, flag separately
   if(cl.includes('sportybet')||cl.includes('sporty|')||cl.includes('betnaija')||
      cl.includes('bet9ja')||cl.includes('1xbet')||cl.includes('betking')||
-     (cl.includes('opay payment gateway')&&ctx.includes('sporty')))
+     (cl.includes('opay payment gateway')&&ctx.includes('sporty'))||
+     ctx.includes('sporty internet ltd'))
     return 'recycleFunds';
   return 'realCredit';
 }
@@ -608,6 +620,13 @@ function createMonthRecord(ym,label){
   return {gross:0,count:0,internalMove:0,selfTransfer:0,loanDisbursement:0,recycleFunds:0,realCredit:0,label:label||ymToLabel(ym)};
 }
 
+function parseSlashDateParts(a,b,y){
+  const first=parseInt(a,10),second=parseInt(b,10),year=parseInt(y,10);
+  if(first>12&&second<=12)return {day:first,month:second,year};
+  if(second>12&&first<=12)return {day:second,month:first,year};
+  return {day:first,month:second,year};
+}
+
 function extractStatementPeriod(fullText){
   const patterns=[
     /Period\s+(\d{2})[-\/](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-\s]*(20\d{2})\s*to\s*(\d{2})[-\/](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-\s]*(20\d{2})/i,
@@ -621,9 +640,19 @@ function extractStatementPeriod(fullText){
       const endMonth=MONTH_MAP[m[5].toLowerCase().slice(0,3)];
       return {start:`${m[3]}-${String(startMonth).padStart(2,'0')}-${m[1]}`,end:`${m[6]}-${String(endMonth).padStart(2,'0')}-${m[4]}`};
     }
-    return {start:`${m[3]}-${m[2]}-${m[1]}`,end:`${m[6]}-${m[5]}-${m[4]}`};
+    const start=parseSlashDateParts(m[1],m[2],m[3]);
+    const end=parseSlashDateParts(m[4],m[5],m[6]);
+    return {
+      start:`${start.year}-${String(start.month).padStart(2,'0')}-${String(start.day).padStart(2,'0')}`,
+      end:`${end.year}-${String(end.month).padStart(2,'0')}-${String(end.day).padStart(2,'0')}`
+    };
   }
   return null;
+}
+
+function extractSummaryMoneyInTotal(fullText){
+  const m=fullText.match(/Total Money In\s*₦?\s*([\d,]+\.\d{2})/i)||fullText.match(/Total Credit\s*₦?\s*([\d,]+\.\d{2})/i);
+  return m?parseFloat(m[1].replace(/,/g,'')):null;
 }
 
 function extractTransactionDateRange(pages){
@@ -636,7 +665,11 @@ function extractTransactionDateRange(pages){
     for(const line of page.lines||[]){
       const text=(line.text||'').trim();
       let m=text.match(/\b(\d{2})\/(\d{2})\/(20\d{2})\b/);
-      if(m){pushDate(parseInt(m[1],10),parseInt(m[2],10),parseInt(m[3],10));continue;}
+      if(m){
+        const parts=parseSlashDateParts(m[1],m[2],m[3]);
+        pushDate(parts.day,parts.month,parts.year);
+        continue;
+      }
       m=text.match(/\b(\d{2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(20\d{2}|\d{2})\b/i);
       if(m){
         const year=m[3].length===2?parseInt(`20${m[3]}`,10):parseInt(m[3],10);
@@ -677,7 +710,8 @@ function buildParserRegistry(bankName,fullText,pages){
   const registry=[
     {name:'Transaction Summary',kind:'summary',run:()=>parseTransactionSummaryFromPages(pages,fullText)},
     {name:'MBS Summary Table',kind:'summary',run:()=>parseMBSSummaryTable(fullText)},
-    {name:'Generic Summary Tokens',kind:'summary',run:()=>parseSummaryTable(fullText)}
+    {name:'Generic Summary Tokens',kind:'summary',run:()=>parseSummaryTable(fullText)},
+    {name:'ISO Debit/Credit Table',kind:'generic',run:()=>parseIsoDebitCreditTable(pages,fullText)}
   ];
   if(bankName==='Moniepoint'||fullText.toLowerCase().includes('moniepoint'))registry.push({name:'Moniepoint Parser',kind:'bank',run:()=>parseMoniepoint(pages,fullText)});
   if(bankName.includes('Kuda')||fullText.toLowerCase().includes('kuda'))registry.push({name:'Kuda Parser',kind:'bank',run:()=>parseKudaLayout(pages)});
@@ -690,7 +724,7 @@ function buildParserRegistry(bankName,fullText,pages){
   return registry;
 }
 
-function validateExtractionCandidate(candidate,bankName,summaryMonthly,period,txRange){
+function validateExtractionCandidate(candidate,bankName,summaryMonthly,period,txRange,summaryMoneyInTotal){
   const warnings=[];
   const notes=[];
   const monthly=normalizeMonthlyMap(candidate.monthly);
@@ -721,6 +755,17 @@ function validateExtractionCandidate(candidate,bankName,summaryMonthly,period,tx
     notes.push('No monthly summary table was available for cross-checking.');
   }
 
+  const extractedTotal=months.reduce((sum,ym)=>sum+(monthly[ym]?.gross||0),0);
+  if(summaryMoneyInTotal!=null){
+    if(Math.abs(extractedTotal-summaryMoneyInTotal)<0.01){
+      confidence+=0.2;
+      notes.push(`Extracted total credits match the statement total money in (${fmt(summaryMoneyInTotal)}).`);
+    }else{
+      confidence-=0.15;
+      warnings.push(`Extracted total credits ${fmt(extractedTotal)} do not match statement total money in ${fmt(summaryMoneyInTotal)}.`);
+    }
+  }
+
   let coverageIssue=false;
   if(period&&txRange){
     if(txRange.start>period.start||txRange.end<period.end){
@@ -745,12 +790,13 @@ function selectBestExtraction(pages,fullText,bankName){
   const summaryMonthly=normalizeMonthlyMap(parseTransactionSummaryFromPages(pages,fullText));
   const period=extractStatementPeriod(fullText);
   const txRange=extractTransactionDateRange(pages);
+  const summaryMoneyInTotal=extractSummaryMoneyInTotal(fullText);
   const candidates=[];
   for(const parser of buildParserRegistry(bankName,fullText,pages)){
     try{
       const monthly=normalizeMonthlyMap(parser.run()||{});
       if(!ok(monthly))continue;
-      candidates.push(validateExtractionCandidate({parserName:parser.name,kind:parser.kind,monthly},bankName,summaryMonthly,period,txRange));
+      candidates.push(validateExtractionCandidate({parserName:parser.name,kind:parser.kind,monthly},bankName,summaryMonthly,period,txRange,summaryMoneyInTotal));
     }catch(err){
       console.warn('Parser failed',parser.name,err);
     }
@@ -973,11 +1019,17 @@ function buildTransactionBlocks(pages){
 
 function getYmFromDate(dateStr){
   let m=/^(\d{2})\/(\d{2})\/(20\d{2})$/.exec(dateStr);
-  if(m)return `${m[3]}-${m[2]}`;
+  if(m){
+    const parts=parseSlashDateParts(m[1],m[2],m[3]);
+    return `${parts.year}-${String(parts.month).padStart(2,'0')}`;
+  }
   m=/^(\d{2})-(\d{2})-(20\d{2})$/.exec(dateStr);
   if(m)return `${m[3]}-${m[2]}`;
   m=/^(\d{2})\/(\d{2})\/(\d{2})$/.exec(dateStr);
-  if(m)return `20${m[3]}-${m[2]}`;
+  if(m){
+    const parts=parseSlashDateParts(m[1],m[2],`20${m[3]}`);
+    return `${parts.year}-${String(parts.month).padStart(2,'0')}`;
+  }
   return null;
 }
 
@@ -1036,12 +1088,78 @@ function parseGenericMoneyInTable(pages, fullText, bankHint=''){
   return monthly;
 }
 
+function parseIsoDebitCreditTable(pages, fullText){
+  const monthly={};
+  const nameM=fullText.match(/Business Name\s+([A-Z0-9& .,'-]{4,})/i)||
+              fullText.match(/Account Name[:\s]+([A-Z0-9& .,'-]{4,})/i);
+  const accountName=nameM?nameM[1].trim():'';
+  const START_RE=/^20\d{2}-\d{2}-\d{2}T\d{2}:/;
+  const TIME_ONLY_RE=/^\d{2}:\d{2}$/;
+
+  for(const page of pages){
+    const blocks=[];
+    let current=[];
+    for(const line of page.lines||[]){
+      const text=(line.text||'').replace(/\s+/g,' ').trim();
+      if(!text)continue;
+      if(START_RE.test(text)){
+        if(current.length)blocks.push(current.join(' '));
+        current=[text];
+      }else if(current.length){
+        current.push(text);
+        if(TIME_ONLY_RE.test(text))continue;
+      }
+    }
+    if(current.length)blocks.push(current.join(' '));
+
+    for(const block of blocks){
+      const dateM=block.match(/^(20\d{2}-\d{2}-\d{2})T\d{2}:/);
+      if(!dateM)continue;
+      const ym=dateM[1].slice(0,7);
+      const nums=[...block.matchAll(/[\d,]+\.\d{2}/g)].map(m=>parseFloat(m[0].replace(/,/g,'')));
+      if(nums.length<3)continue;
+      const debit=nums[nums.length-3];
+      const credit=nums[nums.length-2];
+      if(debit!==0||!(credit>0))continue;
+      if(/electronic money transfer levy|_emtl_dc_|charge\+vat|stamp duty/i.test(block))continue;
+      addCreditClassified(monthly,ym,credit,block,accountName,block);
+    }
+  }
+  return monthly;
+}
+
 function parsePalmPay(pages, fullText){
-  const monthly=parseGenericMoneyInTable(pages,fullText,'PalmPay');
+  const monthly=parsePalmPayStructuredTable(pages,fullText);
   if(ok(monthly))return monthly;
+  const generic=parseGenericMoneyInTable(pages,fullText,'PalmPay');
+  if(ok(generic))return generic;
   const fallback=parsePalmPayNewFormat(pages, fullText);
   if(ok(fallback))return fallback;
   return {};
+}
+
+function parsePalmPayStructuredTable(pages, fullText){
+  const monthly={};
+  const nameM=fullText.match(/Name\s+([A-Z][A-Z\s]{4,})/i)||fullText.match(/Account Name[:\s]+([A-Z][A-Z\s]{4,})/i);
+  const accountName=nameM?nameM[1].trim():'';
+  const rowRe=/^(\d{2})\/(\d{2})\/(20\d{2})\s+\d{2}:\d{2}:\d{2}\s+(?:AM|PM)/i;
+
+  for(const page of pages){
+    for(const line of page.lines||[]){
+      const text=(line.text||'').replace(/\s+/g,' ').trim();
+      if(!rowRe.test(text))continue;
+      const m=text.match(/^(\d{2})\/(\d{2})\/(20\d{2})/);
+      if(!m)continue;
+      const parts=parseSlashDateParts(m[1],m[2],m[3]);
+      const ym=`${parts.year}-${String(parts.month).padStart(2,'0')}`;
+      const creditM=text.match(/\+([\d,]+\.\d{2})\b/);
+      if(!creditM)continue;
+      const amount=parseFloat(creditM[1].replace(/,/g,''));
+      if(!(amount>0))continue;
+      addCreditClassified(monthly,ym,amount,text,accountName,text);
+    }
+  }
+  return monthly;
 }
 
 function parsePalmPayNewFormat(pages, fullText){
@@ -1225,6 +1343,8 @@ function parseMoniepoint(pages,fullText){
 }
 
 function parseKudaLayout(pages){
+  const strict=parseKudaStructuredStatement(pages);
+  if(ok(strict))return strict;
   const monthly={};
   const DATE_RE=/^(\d{2})\/(\d{2})\/(\d{2,4})$/;
   const AMT_RE=/^\u20a6([\d,]+\.\d{2})$/;
@@ -1257,6 +1377,68 @@ function parseKudaLayout(pages){
     }
   }
   return monthly;
+}
+
+function parseKudaStructuredStatement(pages){
+  const monthly={};
+  const accountName=extractAccountHolderNameFromPages(pages);
+  const inboundCategories=['inward transfer','local funds transfer'];
+  const outboundCategories=['outward transfer','spend and save','bills','airtime','card','utilities','withdrawal'];
+
+  const lines=[];
+  for(const page of pages){
+    for(const line of page.lines||[]){
+      const text=(line.text||'').replace(/\s+/g,' ').trim();
+      if(!text)continue;
+      if(/^All Statements$/i.test(text)||/^Account Number\s*:/.test(text)||/^Page \d+ of \d+$/i.test(text))continue;
+      lines.push(text);
+    }
+  }
+
+  let i=0;
+  while(i<lines.length){
+    if(!/^\d{2}\/\d{2}\/\d{2}$/.test(lines[i])){i++;continue;}
+    const dateLine=lines[i];
+    const block=[dateLine];
+    i++;
+    while(i<lines.length&&!/^\d{2}\/\d{2}\/\d{2}$/.test(lines[i])){
+      block.push(lines[i]);
+      i++;
+    }
+
+    const dateM=/^(\d{2})\/(\d{2})\/(\d{2})$/.exec(dateLine);
+    if(!dateM)continue;
+    const ym=`20${dateM[3]}-${dateM[2]}`;
+
+    const amountLine=block.find(line=>/^₦[\d,]+\.\d{2}$/.test(line));
+    if(!amountLine)continue;
+    const amount=parseFloat(amountLine.replace(/[₦,]/g,''));
+    if(!(amount>0))continue;
+
+    const blockText=block.join(' ');
+    const lower=blockText.toLowerCase();
+    const categoryIndex=block.findIndex(line=>{
+      const l=line.toLowerCase();
+      return inboundCategories.includes(l)||outboundCategories.includes(l);
+    });
+    const category=categoryIndex>=0?block[categoryIndex].toLowerCase():'';
+
+    const isInbound=inboundCategories.includes(category)||
+      (!outboundCategories.some(cat=>lower.includes(cat))&&(lower.includes('received from')||lower.includes('transfer from')||lower.includes('disbursment')||lower.includes('disbursement')));
+
+    if(!isInbound)continue;
+    addCreditClassified(monthly,ym,amount,blockText,accountName,blockText);
+  }
+  return monthly;
+}
+
+function extractAccountHolderNameFromPages(pages){
+  const firstPage=(pages[0]?.lines||[]).map(line=>(line.text||'').replace(/\s+/g,' ').trim()).filter(Boolean);
+  for(let i=0;i<firstPage.length-1;i++){
+    if(/^Account Number\b/i.test(firstPage[i]))return firstPage[i+1]||'';
+    if(/^All Statements$/i.test(firstPage[i])&&firstPage[i+1]&&!/^\d/.test(firstPage[i+1]))return firstPage[i+1];
+  }
+  return '';
 }
 
 function parseMBSSummaryTable(fullText){
