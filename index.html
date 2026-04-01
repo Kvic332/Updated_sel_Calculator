@@ -472,6 +472,10 @@ function ymToLabel(ym){const[yr,mo]=ym.split('-');return MONTH_ABBR[parseInt(mo,
 
 function detectBank(text){
   const t=text.toLowerCase();
+  // Sterling must be checked first — its PDFs can contain keywords like
+  // 'wallet' or 'opay' in transaction narrations, causing false OPay matches.
+  // We require both 'sterling' AND 'transaction summary' to be confident.
+  if((t.includes('sterling bank')||t.includes('sterling'))&&t.includes('transaction summary'))return 'Sterling Bank';
   const aliasMap=[
     ['Moniepoint',['moniepoint mfb','moniepoint microfinance']],
     ['OPay',['owealth','opay digital','wallet account','9payment service','o-pay','opay']],
@@ -940,7 +944,15 @@ async function extractPDF(file){
     const ft=fullText.toLowerCase();
     let monthly={};
 
-    if(bank==='Moniepoint'||ft.includes('moniepoint'))monthly=parseMoniepoint(pages,fullText);
+    // Sterling Bank: go straight to the summary-table parser.
+    // Its PDFs have a "Transaction Summary" block with monthly totals —
+    // parseMBSSummaryTable reads that perfectly. Skipping transaction-level
+    // parsers prevents false matches on OPay/wallet narrations in the statement.
+    if(bank==='Sterling Bank'){
+      monthly=parseMBSSummaryTable(fullText);
+      if(!ok(monthly))monthly=parseSummaryTable(fullText);
+    }
+    if(!ok(monthly)&&(bank==='Moniepoint'||ft.includes('moniepoint')))monthly=parseMoniepoint(pages,fullText);
     if(!ok(monthly)&&(bank.includes('Kuda')||ft.includes('kuda')))monthly=parseKudaLayout(pages);
     if(!ok(monthly)&&(bank==='OPay'||ft.includes('owealth')||ft.includes('9payment')))monthly=parseOpayLayout(pages,fullText);
     if(!ok(monthly)&&bank==='PalmPay')monthly=parsePalmPay(pages,fullText);
