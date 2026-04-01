@@ -783,6 +783,10 @@ function validateExtractionCandidate(candidate,bankName,summaryMonthly,period,tx
     warnings.push('Fewer than 3 months were extracted. Review this statement manually.');
   }
 
+  if(months.length>6){
+    notes.push(`The statement contains ${months.length} monthly buckets; the UI preview shows only the latest 6 months.`);
+  }
+
   confidence=Math.max(0,Math.min(0.99,confidence));
   return {...candidate,monthly,confidenceScore:confidence,summaryMatched,coverageIssue,warnings,notes,bankName};
 }
@@ -1345,7 +1349,7 @@ function parseMoniepoint(pages,fullText){
 }
 
 function parseKudaLayout(pages){
-  const strict=parseKudaStructuredStatementV2(pages);
+  const strict=parseKudaStructuredStatementV3(pages);
   if(ok(strict))return strict;
   const monthly={};
   const DATE_RE=/^(\d{2})\/(\d{2})\/(\d{2,4})$/;
@@ -1508,6 +1512,59 @@ function parseKudaStructuredStatementV2(pages){
     if(!isInbound)continue;
 
     const signature=block.slice(0,6).join('|');
+    if(seen.has(signature))continue;
+    seen.add(signature);
+
+    addCreditClassified(monthly,ym,amount,blockText,accountName,blockText);
+  }
+  return monthly;
+}
+
+function parseKudaStructuredStatementV3(pages){
+  const monthly={};
+  const accountName=extractAccountHolderNameFromPages(pages);
+  const seen=new Set();
+  const dateOnlyRe=/^\d{2}\/\d{2}\/\d{2}$/;
+  const timeOnlyRe=/^\d{2}:\d{2}:\d{2}$/;
+  const amountOnlyRe=/^(?:₦|â‚¦)?[\d,]+\.\d{2}$/;
+
+  const lines=[];
+  for(const page of pages){
+    for(const line of page.lines||[]){
+      const text=(line.text||'').replace(/\s+/g,' ').trim();
+      if(!text)continue;
+      if(/^All Statements$/i.test(text)||/^Account Number\s*:/.test(text)||/^Page \d+ of \d+$/i.test(text))continue;
+      lines.push(text);
+    }
+  }
+
+  let i=0;
+  while(i<lines.length){
+    if(!dateOnlyRe.test(lines[i])){i++;continue;}
+    const dateLine=lines[i];
+    const block=[dateLine];
+    i++;
+    while(i<lines.length&&!dateOnlyRe.test(lines[i])){
+      block.push(lines[i]);
+      i++;
+    }
+
+    const timeLine=block.find(line=>timeOnlyRe.test(line))||'';
+    const amountLine=block.find(line=>amountOnlyRe.test(line))||'';
+    if(!amountLine)continue;
+    const amount=parseFloat(amountLine.replace(/[₦â‚¦,]/g,''));
+    if(!(amount>0))continue;
+
+    const blockText=block.join(' ');
+    const lower=blockText.toLowerCase();
+    const isInbound=/\binward\s+transfer\b/.test(lower)||/\blocal\s+funds\s+transfer\b/.test(lower);
+    if(!isInbound)continue;
+
+    const dm=/^(\d{2})\/(\d{2})\/(\d{2})$/.exec(dateLine);
+    if(!dm)continue;
+    const ym=`20${dm[3]}-${dm[2]}`;
+
+    const signature=`${dateLine}|${timeLine}|${amount.toFixed(2)}|${block.slice(0,7).join('|')}`;
     if(seen.has(signature))continue;
     seen.add(signature);
 
