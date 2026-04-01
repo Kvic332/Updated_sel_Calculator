@@ -715,6 +715,7 @@ function buildParserRegistry(bankName,fullText,pages){
   ];
   if(bankName==='Moniepoint'||fullText.toLowerCase().includes('moniepoint'))registry.push({name:'Moniepoint Parser',kind:'bank',run:()=>parseMoniepoint(pages,fullText)});
   if(bankName.includes('Kuda')||fullText.toLowerCase().includes('kuda'))registry.push({name:'Kuda Parser',kind:'bank',run:()=>parseKudaLayout(pages)});
+  if(bankName==='FCMB'||/first city monument bank/i.test(fullText))registry.push({name:'FCMB Table Parser',kind:'bank',run:()=>parseFcmbTable(pages,fullText)});
   if(bankName==='OPay'||/opay digital|wallet account|9payment service/i.test(fullText))registry.push({name:'OPay Parser',kind:'bank',run:()=>parseOpayLayout(pages,fullText)});
   if(bankName==='PalmPay')registry.push({name:'PalmPay Parser',kind:'bank',run:()=>parsePalmPay(pages,fullText)});
   registry.push(
@@ -1243,6 +1244,7 @@ function detectBank(text){
   const t=text.toLowerCase();
   if((t.includes('mybankstatement')||t.includes('transactionsummary'))&&t.includes('year month totaldebit totalcredit'))return 'MBS Summary';
   if((t.includes('sterling bank')||t.includes('sterling'))&&t.includes('transaction summary'))return 'Sterling Bank';
+  if(t.includes('kuda mf bank')||t.includes('kudabank')||(t.includes('all statements')&&t.includes('spend account')&&t.includes('money in')))return 'Kuda MF Bank';
   const aliasMap=[
     ['Moniepoint',['moniepoint mfb','moniepoint microfinance']],
     ['OPay',['opay digital','wallet account','9payment service']],
@@ -1379,11 +1381,34 @@ function parseKudaLayout(pages){
   return monthly;
 }
 
+function parseFcmbTable(pages, fullText){
+  const monthly={};
+  const nameM=fullText.match(/Account name\s+([A-Z][A-Z\s]{3,})/i);
+  const accountName=nameM?nameM[1].trim():'';
+  const creditLikeSkip=/opening balance|transaction charge|sms alert charges|emt levy|hold on account|quarterly card maint fee|airtime|data\//i;
+
+  for(const page of pages){
+    for(const line of page.lines||[]){
+      const text=(line.text||'').replace(/\s+/g,' ').trim();
+      if(!text||!/\d{2}-\d{2}-\d{4}\s+\d{2}-\d{2}-\d{4}/.test(text))continue;
+      const m=text.match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2})-(\d{2})-(\d{4})\s+(.+?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})$/);
+      if(!m)continue;
+      const ym=`${m[3]}-${m[1]}`;
+      const details=m[7].trim();
+      const debit=parseFloat(m[8].replace(/,/g,''));
+      const credit=parseFloat(m[9].replace(/,/g,''));
+      if(!(credit>0)||debit!==0)continue;
+      if(creditLikeSkip.test(details))continue;
+      addCreditClassified(monthly,ym,credit,details,accountName,details);
+    }
+  }
+  return monthly;
+}
+
 function parseKudaStructuredStatement(pages){
   const monthly={};
   const accountName=extractAccountHolderNameFromPages(pages);
-  const inboundCategories=['inward transfer','local funds transfer'];
-  const outboundCategories=['outward transfer','spend and save','bills','airtime','card','utilities','withdrawal'];
+  const seen=new Set();
 
   const lines=[];
   for(const page of pages){
@@ -1410,23 +1435,23 @@ function parseKudaStructuredStatement(pages){
     if(!dateM)continue;
     const ym=`20${dateM[3]}-${dateM[2]}`;
 
-    const amountLine=block.find(line=>/^₦[\d,]+\.\d{2}$/.test(line));
+    const timeLine=block.find(line=>/^\d{2}:\d{2}:\d{2}$/.test(line))||'';
+    const amountLines=block.filter(line=>/^₦[\d,]+\.\d{2}$/.test(line));
+    const amountLine=amountLines[0];
     if(!amountLine)continue;
     const amount=parseFloat(amountLine.replace(/[₦,]/g,''));
     if(!(amount>0))continue;
 
     const blockText=block.join(' ');
     const lower=blockText.toLowerCase();
-    const categoryIndex=block.findIndex(line=>{
-      const l=line.toLowerCase();
-      return inboundCategories.includes(l)||outboundCategories.includes(l);
-    });
-    const category=categoryIndex>=0?block[categoryIndex].toLowerCase():'';
-
-    const isInbound=inboundCategories.includes(category)||
-      (!outboundCategories.some(cat=>lower.includes(cat))&&(lower.includes('received from')||lower.includes('transfer from')||lower.includes('disbursment')||lower.includes('disbursement')));
-
+    const isInbound=/\binward\s+transfer\b/.test(lower)||/\blocal\s+funds\s+transfer\b/.test(lower);
     if(!isInbound)continue;
+
+    const balanceLine=amountLines[amountLines.length-1]||'';
+    const signature=`${dateLine}|${timeLine}|${amountLine}|${balanceLine}|${block.slice(0,8).join('|')}`;
+    if(seen.has(signature))continue;
+    seen.add(signature);
+
     addCreditClassified(monthly,ym,amount,blockText,accountName,blockText);
   }
   return monthly;
