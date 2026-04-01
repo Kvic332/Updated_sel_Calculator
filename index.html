@@ -843,11 +843,14 @@ function parseMBSSummaryTable(fullText){
   const re=/(20\d{2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/gi;
   let m;
   while((m=re.exec(flat))!==null){
-    const yr=m[1],mon=m[2].toLowerCase().slice(0,3),credit=parseFloat(m[4].replace(/,/g,''));
-    const mo=MONTH_MAP[mon];if(!mo||credit<=0)continue;
+    const yr=m[1],mon=m[2].toLowerCase().slice(0,3);
+    const credit=parseFloat(m[4].replace(/,/g,''));
+    const mo=MONTH_MAP[mon];
+    if(!mo||credit<=0)continue;
     const ym=`${yr}-${String(mo).padStart(2,'0')}`;
     if(!monthly[ym])monthly[ym]={gross:0,count:0,internalMove:0,selfTransfer:0,loanDisbursement:0,recycleFunds:0,realCredit:0,label:ymToLabel(ym)};
-    monthly[ym].gross=credit;monthly[ym].realCredit=credit;
+    monthly[ym].gross=credit;
+    monthly[ym].realCredit=credit;
   }
   return monthly;
 }
@@ -857,13 +860,18 @@ function parseSummaryTable(fullText){
   const tokens=fullText.replace(/\n/g,' ').replace(/\s+/g,' ').split(' ');
   for(let i=0;i<tokens.length;i++){
     if(!/^20\d{2}$/.test(tokens[i]))continue;
-    const monKey=(tokens[i+1]||'').toLowerCase().slice(0,3);if(!MONTH_MAP[monKey])continue;
-    const ym=`${tokens[i]}-${String(MONTH_MAP[monKey]).padStart(2,'0')}`;if(monthly[ym])continue;
+    const monKey=(tokens[i+1]||'').toLowerCase().slice(0,3);
+    if(!MONTH_MAP[monKey])continue;
+    const ym=`${tokens[i]}-${String(MONTH_MAP[monKey]).padStart(2,'0')}`;
+    if(monthly[ym])continue;
     for(let j=i+2;j<i+14&&j<tokens.length-1;j++){
-      const n1=parseFloat((tokens[j]||'').replace(/,/g,'')),n2=parseFloat((tokens[j+1]||'').replace(/,/g,''));
+      const n1=parseFloat((tokens[j]||'').replace(/,/g,''));
+      const n2=parseFloat((tokens[j+1]||'').replace(/,/g,''));
       if(!isNaN(n1)&&!isNaN(n2)&&n2>=0){
         if(!monthly[ym])monthly[ym]={gross:0,count:0,internalMove:0,selfTransfer:0,loanDisbursement:0,recycleFunds:0,realCredit:0,label:ymToLabel(ym)};
-        monthly[ym].gross=n2;monthly[ym].realCredit=n2;break;
+        monthly[ym].gross=n2;
+        monthly[ym].realCredit=n2;
+        break;
       }
     }
   }
@@ -877,14 +885,17 @@ function parseRowTransaction(rawPages){
     let m;
     const ap=/(\d{2})-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-(\d{2})\s+((?:(?!\d[\d,]*\.\d{2}).)*?)-\s+([\d,]+\.\d{2})/gi;
     while((m=ap.exec(text))!==null){
-      const[,,mon,yr,desc,amt]=m;const mo=ML[mon.toLowerCase().slice(0,3)];if(!mo)continue;
+      const[, ,mon,yr,desc,amt]=m;
+      const mo=ML[mon.toLowerCase().slice(0,3)];
+      if(!mo)continue;
       const ym='20'+yr+'-'+String(mo).padStart(2,'0');
-      if(!shouldIgnoreLine(desc)&&!isRecycledTransaction(desc))addCreditClassified(monthly,ym,parseFloat(amt.replace(/,/g,'')),desc,'',desc);
+      addCreditClassified(monthly,ym,parseFloat(amt.replace(/,/g,'')),desc,'',desc);
     }
     const gp=/(\d{2})\/(\d{2})\/(20\d{2})\s+((?:(?!\d[\d,]*\.\d{2}).)*?)(?:\d[\d,]*\.\d{2}\s+)?-\s+([\d,]+\.\d{2})/g;
     while((m=gp.exec(text))!==null){
-      const[,,mon,yr,desc,amt]=m;const ym=`${yr}-${String(parseInt(mon,10)).padStart(2,'0')}`;
-      if(!shouldIgnoreLine(desc)&&!isRecycledTransaction(desc))addCreditClassified(monthly,ym,parseFloat(amt.replace(/,/g,'')),desc,'',desc);
+      const[, ,mon,yr,desc,amt]=m;
+      const ym=`${yr}-${String(parseInt(mon,10)).padStart(2,'0')}`;
+      addCreditClassified(monthly,ym,parseFloat(amt.replace(/,/g,'')),desc,'',desc);
     }
   }
   return monthly;
