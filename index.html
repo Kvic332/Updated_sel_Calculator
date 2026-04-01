@@ -1007,32 +1007,18 @@ async function extractPDF(file){
     if(!ok(monthly)&&bank==='PalmPay')
       monthly=parsePalmPay(pages,fullText);
     if(!ok(monthly))
-      monthly=parseGenericMoneyInTable(pages,fullText,bank);
-    if(!ok(monthly)&&(bank==='Access Bank'||bank==='GTBank'))
-      monthly=parseRowTransaction(pages.map(p=>p.raw));
-    if(!ok(monthly))
-      monthly=parseMBSSummaryTable(fullText);
-    if(!ok(monthly))
-      monthly=parseSummaryTable(fullText);
-    if(!ok(monthly))
-      monthly=parseRowTransaction(pages.map(p=>p.raw));
-    // Final fallback: try Sterling parser again for similar summary-table formats
-    if(!ok(monthly))
-      monthly=parseSterlingBank(fullText);
-    // Last resort: normalized text scan
-    if(!ok(monthly)){
-      const nameM=fullText.match(/Account(?:\s+Name)?[:\s]+([A-Z][A-Z\s]{4,})/i);
-      const accountName=nameM&&nameM[1]?nameM[1].trim():'';
-      monthly=processNormalizedTextFallback(normalizedFull,format,accountName,monthly);
-    }
-
-    const sorted=buildSortedMonths(monthly);
-    if(!sorted.length){showStatus('Could not extract monthly credits. Format may not be supported.','error');return;}
-    fillInflowFields(sorted,bank);
-    showStatus('Extracted '+sorted.length+' months from '+bank+' statement','success');
-  }catch(err){
-    if(err.name==='PasswordException')showStatus('Incorrect or missing PDF password.','error');
-    else throw err;
+    if(!ok(monthly))monthly=parseGenericMoneyInTable(pages,fullText,bank);
+      if(!ok(monthly)&&(bank==='Access Bank'||bank==='GTBank'))monthly=parseRowTransaction(pages.map(p=>p.raw));
+      if(!ok(monthly))monthly=parseMBSSummaryTable(fullText);
+      if(!ok(monthly))monthly=parseSummaryTable(fullText);
+      if(!ok(monthly))monthly=parseRowTransaction(pages.map(p=>p.raw));
+      const sorted=buildSortedMonths(monthly);
+      if(!sorted.length){showStatus('Could not extract monthly credits. Format may not be supported.','error');return;}
+      fillInflowFields(sorted,bank);
+      showStatus('Extracted '+sorted.length+' months from '+bank+' statement','success');
+    }catch(err){
+      if(err.name==='PasswordException')showStatus('Incorrect or missing PDF password.','error');
+      else throw err;
   }
 }
 
