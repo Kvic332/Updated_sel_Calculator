@@ -51,6 +51,14 @@ select option{background:var(--surface2)}
 .drop-sub{font-size:11px;color:var(--muted)}
 #file-input{position:absolute;inset:0;opacity:0;cursor:pointer}
 .status-box{display:none;padding:12px 16px;border-radius:3px;font-size:12px;margin-top:12px}
+.validation-box{display:none;padding:14px 16px;border-radius:3px;font-size:11px;margin-top:12px;background:rgba(0,212,255,.05);border:1px solid rgba(0,212,255,.18)}
+.validation-title{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+.validation-meta{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.validation-pill{font-size:9px;letter-spacing:1px;padding:3px 8px;border-radius:999px;text-transform:uppercase;border:1px solid rgba(0,212,255,.2);color:var(--accent);background:rgba(0,212,255,.08)}
+.validation-pill.warn{color:var(--orange);border-color:rgba(255,149,0,.2);background:rgba(255,149,0,.08)}
+.validation-pill.bad{color:var(--red);border-color:rgba(255,68,68,.2);background:rgba(255,68,68,.08)}
+.validation-list{margin:0;padding-left:18px;color:var(--text)}
+.validation-list li{margin:4px 0}
 .pdf-preview{display:none;margin-top:16px}
 
 /* Inflow table — 6 columns now */
@@ -135,6 +143,7 @@ select option{background:var(--surface2)}
       </div>
     </div>
     <div class="status-box" id="pdf-status"></div>
+    <div class="validation-box" id="validation-box"></div>
     <div class="pdf-preview" id="pdf-preview">
       <div style="font-size:10px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:10px">Extracted Monthly Credits — Breakdown</div>
       <div id="pdf-preview-rows"></div>
@@ -421,6 +430,7 @@ function runCalculation(){
 
 // ─── File Handling ────────────────────────────────────────────────────────────
 let currentFile=null;
+let currentExtractionReport=null;
 function handleDragOver(e){e.preventDefault();document.getElementById('drop-zone').classList.add('drag-over');}
 function handleDragLeave(){document.getElementById('drop-zone').classList.remove('drag-over');}
 function handleDrop(e){
@@ -432,6 +442,7 @@ function handleDrop(e){
 function handleFileSelect(e){const f=e.target.files[0];if(f)setFile(f);}
 function setFile(f){
   currentFile=f;
+  currentExtractionReport=null;
   const isXL=f.name.toLowerCase().match(/\.xlsx?$/);
   document.getElementById('drop-icon').textContent='OK';
   document.getElementById('drop-icon').style.color='var(--green)';
@@ -439,6 +450,7 @@ function setFile(f){
   document.getElementById('drop-sub').textContent=(f.size/1024).toFixed(0)+' KB \u2014 '+(isXL?'Mono Excel':'PDF')+' \u2014 Ready to Extract';
   document.getElementById('drop-zone').style.borderColor='var(--green)';
   hideStatus();
+  hideValidationReport();
 }
 function showStatus(msg,type){
   const el=document.getElementById('pdf-status');
@@ -449,16 +461,39 @@ function showStatus(msg,type){
   el.textContent=msg;
 }
 function hideStatus(){document.getElementById('pdf-status').style.display='none';}
+function hideValidationReport(){document.getElementById('validation-box').style.display='none';}
+function renderValidationReport(report){
+  currentExtractionReport=report||null;
+  const el=document.getElementById('validation-box');
+  if(!report){el.style.display='none';return;}
+  const score=Math.round((report.confidenceScore||0)*100);
+  const confidenceClass=score>=85?'':score>=60?' warn':' bad';
+  const summaryClass=report.summaryMatched?'':' warn';
+  const coverageClass=report.coverageIssue?' bad':'';
+  const warnings=(report.warnings||[]).map(w=>`<li>${w}</li>`).join('');
+  const notes=(report.notes||[]).map(n=>`<li>${n}</li>`).join('');
+  el.innerHTML=`<div class="validation-title">Extraction Validation</div>
+    <div class="validation-meta">
+      <span class="validation-pill${confidenceClass}">Confidence ${score}%</span>
+      <span class="validation-pill">Bank ${report.bankName||'Unknown'}</span>
+      <span class="validation-pill">Parser ${report.parserName||'Fallback'}</span>
+      <span class="validation-pill${summaryClass}">Summary ${report.summaryMatched?'Matched':'Not matched'}</span>
+      <span class="validation-pill${coverageClass}">Coverage ${report.coverageIssue?'Check dates':'Looks OK'}</span>
+    </div>
+    <ul class="validation-list">${warnings||notes||'<li>No validation issues detected.</li>'}</ul>`;
+  el.style.display='block';
+}
 
 async function extractBankStatement(){
   if(!currentFile){showStatus('Please select a PDF or XLSX file first.','error');return;}
   showStatus('Extracting monthly credits...','info');
+  hideValidationReport();
   document.getElementById('extract-spinner').style.display='block';
   document.getElementById('extract-btn-text').textContent='Extracting...';
   try{
     if(currentFile.name.toLowerCase().match(/\.xlsx?$/))await extractExcel(currentFile);
     else await extractPDF(currentFile);
-  }catch(err){showStatus('Error: '+err.message,'error');console.error(err);}
+  }catch(err){hideValidationReport();showStatus('Error: '+err.message,'error');console.error(err);}
   finally{
     document.getElementById('extract-spinner').style.display='none';
     document.getElementById('extract-btn-text').textContent='Extract Monthly Credits';
@@ -557,7 +592,172 @@ async function extractExcel(file){
   const sorted=buildSortedMonths(monthly);
   if(!sorted.length){showStatus('No credit transactions found in Excel statement.','error');return;}
   fillInflowFields(sorted,accountName||'Mono Excel');
+  renderValidationReport({
+    bankName:'Mono Excel',
+    parserName:'Excel Column Parser',
+    confidenceScore:0.78,
+    summaryMatched:false,
+    coverageIssue:false,
+    warnings:['Excel extraction does not have PDF summary cross-checking. Review the filled months if the workbook format is unusual.'],
+    notes:[]
+  });
   showStatus('Extracted '+sorted.length+' months from Mono Excel statement','success');
+}
+
+function createMonthRecord(ym,label){
+  return {gross:0,count:0,internalMove:0,selfTransfer:0,loanDisbursement:0,recycleFunds:0,realCredit:0,label:label||ymToLabel(ym)};
+}
+
+function extractStatementPeriod(fullText){
+  const patterns=[
+    /Period\s+(\d{2})[-\/](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-\s]*(20\d{2})\s*to\s*(\d{2})[-\/](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-\s]*(20\d{2})/i,
+    /Statement Period\s*[:\s]+(\d{2})\/(\d{2})\/(20\d{2})\s*(?:to|-)\s*(\d{2})\/(\d{2})\/(20\d{2})/i
+  ];
+  for(const re of patterns){
+    const m=fullText.match(re);
+    if(!m)continue;
+    if(m[2]&&isNaN(Number(m[2]))){
+      const startMonth=MONTH_MAP[m[2].toLowerCase().slice(0,3)];
+      const endMonth=MONTH_MAP[m[5].toLowerCase().slice(0,3)];
+      return {start:`${m[3]}-${String(startMonth).padStart(2,'0')}-${m[1]}`,end:`${m[6]}-${String(endMonth).padStart(2,'0')}-${m[4]}`};
+    }
+    return {start:`${m[3]}-${m[2]}-${m[1]}`,end:`${m[6]}-${m[5]}-${m[4]}`};
+  }
+  return null;
+}
+
+function extractTransactionDateRange(pages){
+  const dates=[];
+  const pushDate=(d,m,y)=>{
+    const iso=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    dates.push(iso);
+  };
+  for(const page of pages){
+    for(const line of page.lines||[]){
+      const text=(line.text||'').trim();
+      let m=text.match(/\b(\d{2})\/(\d{2})\/(20\d{2})\b/);
+      if(m){pushDate(parseInt(m[1],10),parseInt(m[2],10),parseInt(m[3],10));continue;}
+      m=text.match(/\b(\d{2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(20\d{2}|\d{2})\b/i);
+      if(m){
+        const year=m[3].length===2?parseInt(`20${m[3]}`,10):parseInt(m[3],10);
+        pushDate(parseInt(m[1],10),MONTH_MAP[m[2].toLowerCase().slice(0,3)],year);
+      }
+    }
+  }
+  if(!dates.length)return null;
+  dates.sort();
+  return {start:dates[0],end:dates[dates.length-1]};
+}
+
+function normalizeMonthlyMap(monthly){
+  const out={};
+  for(const [ym,v] of Object.entries(monthly||{})){
+    if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym))continue;
+    out[ym]={...createMonthRecord(ym,v.label),...v,label:v.label||ymToLabel(ym)};
+  }
+  return out;
+}
+
+function compareMonthlyMaps(actual,expected){
+  const months=new Set([...Object.keys(actual||{}),...Object.keys(expected||{})]);
+  let matched=0,total=0;
+  const mismatches=[];
+  for(const ym of months){
+    const a=Math.round((actual[ym]?.gross||0)*100)/100;
+    const e=Math.round((expected[ym]?.gross||0)*100)/100;
+    total++;
+    if(Math.abs(a-e)<0.01)matched++;
+    else mismatches.push(`${ymToLabel(ym)} expected ${fmt(e)} but got ${fmt(a)}`);
+  }
+  return {matched,total,mismatches,allMatched:total>0&&matched===total};
+}
+
+function buildParserRegistry(bankName,fullText,pages){
+  const rawPages=pages.map(p=>p.raw);
+  const registry=[
+    {name:'Transaction Summary',kind:'summary',run:()=>parseTransactionSummaryFromPages(pages,fullText)},
+    {name:'MBS Summary Table',kind:'summary',run:()=>parseMBSSummaryTable(fullText)},
+    {name:'Generic Summary Tokens',kind:'summary',run:()=>parseSummaryTable(fullText)}
+  ];
+  if(bankName==='Moniepoint'||fullText.toLowerCase().includes('moniepoint'))registry.push({name:'Moniepoint Parser',kind:'bank',run:()=>parseMoniepoint(pages,fullText)});
+  if(bankName.includes('Kuda')||fullText.toLowerCase().includes('kuda'))registry.push({name:'Kuda Parser',kind:'bank',run:()=>parseKudaLayout(pages)});
+  if(bankName==='OPay'||/opay digital|wallet account|9payment service/i.test(fullText))registry.push({name:'OPay Parser',kind:'bank',run:()=>parseOpayLayout(pages,fullText)});
+  if(bankName==='PalmPay')registry.push({name:'PalmPay Parser',kind:'bank',run:()=>parsePalmPay(pages,fullText)});
+  registry.push(
+    {name:'Generic Table Parser',kind:'generic',run:()=>parseGenericMoneyInTable(pages,fullText,bankName)},
+    {name:'Row Transaction Parser',kind:'generic',run:()=>parseRowTransaction(rawPages)}
+  );
+  return registry;
+}
+
+function validateExtractionCandidate(candidate,bankName,summaryMonthly,period,txRange){
+  const warnings=[];
+  const notes=[];
+  const monthly=normalizeMonthlyMap(candidate.monthly);
+  const months=Object.keys(monthly).sort();
+  if(!months.length){
+    return {...candidate,monthly,confidenceScore:0,summaryMatched:false,coverageIssue:true,warnings:['No valid monthly credit rows were extracted.'],notes};
+  }
+
+  let confidence=0.35;
+  if(candidate.kind==='summary')confidence+=0.35;
+  if(candidate.kind==='bank')confidence+=0.2;
+  if(candidate.kind==='generic')confidence+=0.1;
+  if(bankName&&bankName!=='Unknown Bank')confidence+=0.05;
+
+  let summaryMatched=false;
+  if(summaryMonthly&&Object.keys(summaryMonthly).length){
+    const comparison=compareMonthlyMaps(monthly,summaryMonthly);
+    if(comparison.allMatched){
+      summaryMatched=true;
+      confidence+=0.25;
+      notes.push('Monthly totals match the statement summary table.');
+    }else{
+      confidence-=0.2;
+      warnings.push('Monthly totals do not fully match the statement summary table.');
+      warnings.push(...comparison.mismatches.slice(0,3));
+    }
+  }else{
+    notes.push('No monthly summary table was available for cross-checking.');
+  }
+
+  let coverageIssue=false;
+  if(period&&txRange){
+    if(txRange.start>period.start||txRange.end<period.end){
+      coverageIssue=true;
+      confidence-=0.1;
+      warnings.push(`Transaction dates found run from ${txRange.start} to ${txRange.end}, while the statement period says ${period.start} to ${period.end}. Possible cut-off or parser gap.`);
+    }else{
+      notes.push(`Transaction dates cover the statement period (${period.start} to ${period.end}).`);
+    }
+  }
+
+  if(months.length<3){
+    confidence-=0.1;
+    warnings.push('Fewer than 3 months were extracted. Review this statement manually.');
+  }
+
+  confidence=Math.max(0,Math.min(0.99,confidence));
+  return {...candidate,monthly,confidenceScore:confidence,summaryMatched,coverageIssue,warnings,notes,bankName};
+}
+
+function selectBestExtraction(pages,fullText,bankName){
+  const summaryMonthly=normalizeMonthlyMap(parseTransactionSummaryFromPages(pages,fullText));
+  const period=extractStatementPeriod(fullText);
+  const txRange=extractTransactionDateRange(pages);
+  const candidates=[];
+  for(const parser of buildParserRegistry(bankName,fullText,pages)){
+    try{
+      const monthly=normalizeMonthlyMap(parser.run()||{});
+      if(!ok(monthly))continue;
+      candidates.push(validateExtractionCandidate({parserName:parser.name,kind:parser.kind,monthly},bankName,summaryMonthly,period,txRange));
+    }catch(err){
+      console.warn('Parser failed',parser.name,err);
+    }
+  }
+  if(!candidates.length)return null;
+  candidates.sort((a,b)=>b.confidenceScore-a.confidenceScore);
+  return candidates[0];
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -619,24 +819,14 @@ async function extractPDF(file){
       pages.push({raw,lines:sortedLines,layoutLines,width:vp.width});
     }
     const fullText=pages.map(p=>p.raw).join('\n');
-    let monthly=parseTransactionSummaryFromPages(pages,fullText);
     const bank=detectBank(fullText);
-    const ft=fullText.toLowerCase();
-
-    if(!ok(monthly)&&(bank==='Moniepoint'||ft.includes('moniepoint')))monthly=parseMoniepoint(pages,fullText);
-    if(!ok(monthly)&&(bank.includes('Kuda')||ft.includes('kuda')))monthly=parseKudaLayout(pages);
-    if(!ok(monthly)&&(bank==='OPay'||ft.includes('owealth')||ft.includes('9payment')))monthly=parseOpayLayout(pages,fullText);
-    if(!ok(monthly)&&bank==='PalmPay')monthly=parsePalmPay(pages,fullText);
-    if(!ok(monthly))monthly=parseGenericMoneyInTable(pages,fullText,bank);
-    if(!ok(monthly)&&(bank==='Access Bank'||bank==='GTBank'))monthly=parseRowTransaction(pages.map(p=>p.raw));
-    if(!ok(monthly))monthly=parseMBSSummaryTable(fullText);
-    if(!ok(monthly))monthly=parseSummaryTable(fullText);
-    if(!ok(monthly))monthly=parseRowTransaction(pages.map(p=>p.raw));
-
-    const sorted=buildSortedMonths(monthly);
+    const best=selectBestExtraction(pages,fullText,bank);
+    if(!best){showStatus('Could not extract monthly credits. Format may not be supported.','error');hideValidationReport();return;}
+    const sorted=buildSortedMonths(best.monthly);
     if(!sorted.length){showStatus('Could not extract monthly credits. Format may not be supported.','error');return;}
     fillInflowFields(sorted,bank);
-    showStatus('Extracted '+sorted.length+' months from '+bank+' statement','success');
+    renderValidationReport(best);
+    showStatus('Extracted '+sorted.length+' months from '+(best.bankName||bank)+' statement','success');
   }catch(err){
     if(err.name==='PasswordException')showStatus('Incorrect or missing PDF password.','error');
     else throw err;
