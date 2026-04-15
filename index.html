@@ -612,16 +612,48 @@ function getTenorMonthsFromDays(rawValue){
   if(!digits||digits<=0)return null;
   return Math.max(1,Math.ceil(digits/30));
 }
-function formatCreditRule(row){
-  if(row.isBadCredit)return 'Flagged as bad credit';
-  if(row.includeInObligation&&row.derivedFromBalance)return 'Derived from outstanding balance / tenor';
-  if(row.includeInObligation)return 'Instalment amount used';
-  if(row.isClosed)return 'Closed account ignored';
-  return 'Monitoring only';
+function extractMoneyTokens(text){
+  return (String(text||'').match(/[\d,]+\.\d{2}/g)||[]).map(parseCurrencyNumber);
 }
-function parseFirstCentralCreditReport(fullText){
+function parseFirstCentralSummaryRows(fullText){
+  const summaryStart=fullText.indexOf('Credit Agreements Summary');
+  const detailsStart=fullText.indexOf('Details of Credit Agreement with');
+  if(summaryStart<0||detailsStart<0||detailsStart<=summaryStart)return [];
+  let summaryText=fullText.slice(summaryStart,detailsStart);
+  summaryText=normalizeCreditReportText(summaryText)
+    .replace(/Credit Agreements Summary This sections includes a Summarized payment beviour of all credit agreements as reported by the Credit Providers/gi,'')
+    .replace(/Subscriber Name\s*Account Number\s*Currency\s*Availed Limit\s*Oustanding Balance\s*Instalment Amount\s*Arrear Amount\s*Facility Classification\s*Account Status/gi,'')
+    .replace(/Account Status\s*Facility Classification\s*Arrear Amount\s*Instalment Amount\s*Oustanding Balance\s*Availed Limit\s*Currency\s*Account Number\s*Subscriber Name/gi,'')
+    .replace(/Page \d+ of \d+ pages/gi,' ')
+    .replace(/Report Extracted on:[^ ]+\s+[^ ]+/gi,' ')
+    .trim();
+
+  const rowRe=/(Closed|Open|Written Off|Lost Written Off|LostWritten Off|WrittenOff)\s+(Performing|Lost|Derogatory|Delinquent|Non Performing|Non-Performing)\s+((?:[\d,]+\.\d{2}\s+){1,4})NGN\s+([A-Za-z0-9-]*\d[A-Za-z0-9-]*(?:\s+[A-Za-z0-9-]*\d[A-Za-z0-9-]*)*)\s+(.+?)(?=\s+(?:Closed|Open|Written Off|Lost Written Off|LostWritten Off|WrittenOff)\s+(?:Performing|Lost|Derogatory|Delinquent|Non Performing|Non-Performing)\s+|\s*$)/gi;
+  const rows=[];
+  let match;
+  while((match=rowRe.exec(summaryText))!==null){
+    const accountStatus=(match[1]||'').trim();
+    const facilityClassification=(match[2]||'').trim();
+    const figures=extractMoneyTokens(match[3]||'');
+    const accountNumber=cleanAccountNumber(match[4]);
+    const subscriberName=(match[5]||'').trim();
+    let arrearAmount=0,instalmentAmount=0,outstandingBalance=0,availedLimit=0;
+    if(figures.length>=4){
+      [arrearAmount,instalmentAmount,outstandingBalance,availedLimit]=figures.slice(0,4);
+    }else if(figures.length===3){
+      [arrearAmount,instalmentAmount,outstandingBalance]=figures;
+    }else if(figures.length===2){
+      [arrearAmount,instalmentAmount]=figures;
+    }else if(figures.length===1){
+      [arrearAmount]=figures;
+    }
+    rows.push({subscriberName,accountNumber,currency:'NGN',availedLimit,outstandingBalance,instalmentAmount,arrearAmount,facilityClassification,accountStatus,figureCount:figures.length});
+  }
+  return [...new Map(rows.map(row=>[row.accountNumber,row])).values()];
+}
+function parseFirstCentralDetailMap(fullText){
   const headingRe=/Details of Credit Agreement with "([^"]+)" for Account Number:\s*([^\n\r]+(?:-\r?\n\s*[^\n\r]+)?)/g;
-  const records=[];
+  const detailMap=new Map();
   let match;
   while((match=headingRe.exec(fullText))!==null){
     const subscriberName=(match[1]||'').trim();
@@ -630,12 +662,47 @@ function parseFirstCentralCreditReport(fullText){
     const anchor=fullText.lastIndexOf('24 Months Payment History',match.index);
     const rawWindow=fullText.slice(anchor>=0?anchor:Math.max(0,match.index-1800),match.index);
     const windowText=normalizeCreditReportText(rawWindow);
-    const accountStatus=extractFieldValue(windowText,/(Closed|Open|Written Off|Lost Written Off|LostWritten Off|WrittenOff)\s+Account Status/i);
-    const facilityClassification=extractFieldValue(windowText,/(Performing|Lost|Derogatory|Delinquent|Non Performing|Non-Performing)\s+Facility Classification/i);
-    const instalmentAmount=parseCurrencyNumber(extractFieldValue(windowText,/Instalment Amount\s+([\d,]+\.\d{2})/i));
-    const outstandingBalance=parseCurrencyNumber(extractFieldValue(windowText,/Current Balance\s+([\d,]+\.\d{2})/i));
-    const loanDurationDays=extractFieldValue(windowText,/((?:\d+)|(?:Not Available))\s+Day\(s\)\s+Loan Duration/i);
-    const tenorMonths=getTenorMonthsFromDays(loanDurationDays);
+    detailMap.set(accountNumber,{
+      subscriberName,
+      accountStatus:extractFieldValue(windowText,/(Closed|Open|Written Off|Lost Written Off|LostWritten Off|WrittenOff)\s+Account Status/i)||'Unknown',
+      facilityClassification:extractFieldValue(windowText,/(Performing|Lost|Derogatory|Delinquent|Non Performing|Non-Performing)\s+Facility Classification/i)||'Unknown',
+      instalmentAmount:parseCurrencyNumber(extractFieldValue(windowText,/Instalment Amount\s+([\d,]+\.\d{2})/i)),
+      outstandingBalance:parseCurrencyNumber(extractFieldValue(windowText,/Current Balance\s+([\d,]+\.\d{2})/i)),
+      loanDurationDays:extractFieldValue(windowText,/((?:\d+)|(?:Not Available))\s+Day\(s\)\s+Loan Duration/i)||'Not Available',
+      tenorMonths:getTenorMonthsFromDays(extractFieldValue(windowText,/((?:\d+)|(?:Not Available))\s+Day\(s\)\s+Loan Duration/i))
+    });
+  }
+  return detailMap;
+}
+function formatCreditRule(row){
+  if(row.isBadCredit)return 'Flagged as bad credit';
+  if(row.includeInObligation&&row.derivedFromBalance)return 'Derived from outstanding balance / tenor';
+  if(row.includeInObligation)return 'Instalment amount used';
+  if(row.isClosed)return 'Closed account ignored';
+  return 'Monitoring only';
+}
+function parseFirstCentralCreditReport(fullText){
+  const summaryRows=parseFirstCentralSummaryRows(fullText);
+  const detailMap=parseFirstCentralDetailMap(fullText);
+  const sourceRows=summaryRows.length?summaryRows:[...detailMap.entries()].map(([accountNumber,detail])=>({
+    subscriberName:detail.subscriberName||'Unknown',
+    accountNumber,
+    outstandingBalance:detail.outstandingBalance||0,
+    instalmentAmount:detail.instalmentAmount||0,
+    arrearAmount:0,
+    availedLimit:0,
+    facilityClassification:detail.facilityClassification||'Unknown',
+    accountStatus:detail.accountStatus||'Unknown'
+  }));
+  const records=sourceRows.map(row=>{
+    const detail=detailMap.get(row.accountNumber)||{};
+    const subscriberName=row.subscriberName||detail.subscriberName||'Unknown';
+    const accountStatus=row.accountStatus||detail.accountStatus||'Unknown';
+    const facilityClassification=row.facilityClassification||detail.facilityClassification||'Unknown';
+    const instalmentAmount=detail.instalmentAmount>0?detail.instalmentAmount:((row.figureCount||0)>=3?row.instalmentAmount:0);
+    const outstandingBalance=detail.outstandingBalance>0?detail.outstandingBalance:((row.figureCount||0)>=3?row.outstandingBalance:0);
+    const loanDurationDays=detail.loanDurationDays||'Not Available';
+    const tenorMonths=detail.tenorMonths||getTenorMonthsFromDays(loanDurationDays);
     const statusNorm=normalizeStatusValue(accountStatus);
     const classificationNorm=normalizeClassificationValue(facilityClassification);
     const isClosed=statusNorm==='closed';
@@ -650,9 +717,9 @@ function parseFirstCentralCreditReport(fullText){
         derivedFromBalance=true;
       }
     }
-    records.push({
+    return {
       subscriberName,
-      accountNumber,
+      accountNumber:row.accountNumber,
       accountStatus:accountStatus||'Unknown',
       facilityClassification:facilityClassification||'Unknown',
       instalmentAmount,
@@ -664,8 +731,8 @@ function parseFirstCentralCreditReport(fullText){
       includeInObligation:monthlyObligation>0,
       isClosed,
       isBadCredit
-    });
-  }
+    };
+  });
   const deduped=[...new Map(records.map(row=>[row.accountNumber,row])).values()];
   const visibleRows=deduped.filter(row=>!row.isClosed);
   const totalMonthlyObligation=visibleRows.reduce((sum,row)=>sum+(row.includeInObligation?row.monthlyObligation:0),0);
