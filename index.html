@@ -543,21 +543,16 @@ async function extractCreditReport(){
   try{
     const ab=await currentCRFile.arrayBuffer();
     const pdf=await pdfjsLib.getDocument({data:ab}).promise;
-    const pages=[];
+    const pageTexts=[];
     for(let i=1;i<=pdf.numPages;i++){
       const page=await pdf.getPage(i);
       const tc=await page.getTextContent();
-      let raw='';
-      for(let k=0;k<tc.items.length;k++){
-        const s=tc.items[k].str;if(!s)continue;
-        if(k===0){raw+=s;continue;}
-        const p=tc.items[k-1].str||'';
-        const noSp=(p.match(/\d$/)&&s.match(/^[.,\d]/))||(p.match(/[.,]$/)&&s.match(/^\d/));
-        raw+=(noSp?'':' ')+s;
-      }
-      pages.push(raw);
+      const parts=[];
+      for(const item of tc.items){if(item.str&&item.str.trim())parts.push(item.str.trim());}
+      pageTexts.push(parts.join(' '));
     }
-    const fullText=pages.join('\n');
+    // Single space-joined string across all pages — matches PDF.js text item layout
+    const fullText=pageTexts.join(' ');
     const result=parseFirstCentralReport(fullText);
     renderCreditObligations(result);
     showCRStatus(`Parsed ${result.accounts.length} open/active accounts from FirstCentral report`,'success');
@@ -576,91 +571,96 @@ async function extractCreditReport(){
  * appears once per account, then extract fields from each block.
  */
 function parseFirstCentralReport(fullText){
-  // Split into per-account blocks
+  // PDF.js produces space-joined text — no newlines between field labels and values.
+  // Key quirk: "Account Status" value sometimes appears AFTER "Repayment Frequency <value>"
+  // e.g. "Account Status Repayment Frequency Open Mo" or "Account Status Open"
+
+  // Split on the per-account heading. Account numbers may contain hyphens or be on the next line.
   const blockSplitRe=/Details of Credit Agreement with\s+"([^"]+)"\s+for Account Number:\s*(\S+)/gi;
   const matches=[...fullText.matchAll(blockSplitRe)];
+  if(!matches.length)return{accounts:[],performingRows:[],derogatory:[],totalMonthlyObligation:0};
 
   const accounts=[];
 
   for(let i=0;i<matches.length;i++){
     const subscriberName=matches[i][1].trim();
-    const accountNumber=matches[i][2].trim();
-    // Extract the text of this block (from current match to next match start)
+    // Account number may have been split by a newline in PDF.js raw — clean it
+    const accountNumber=matches[i][2].replace(/\s+/g,'').trim();
     const blockStart=matches[i].index;
     const blockEnd=i+1<matches.length?matches[i+1].index:fullText.length;
-    const block=fullText.slice(blockStart,blockEnd);
+    // Collapse all whitespace to single spaces (PDF.js space-joined simulation)
+    const block=fullText.slice(blockStart,blockEnd).replace(/\s+/g,' ');
 
-    // Extract Account Status
-    const statusM=block.match(/Account Status\s+(Open|Closed|Written Off)/i);
-    const accountStatus=statusM?statusM[1].trim():'Unknown';
-
-    // Extract Facility Classification
-    const classM=block.match(/Facility Classification\s+(Performing|Lost|Substandard|Doubtful|Written Off|Non.Performing)/i);
+    // ── Facility Classification ──────────────────────────────────────
+    const classM=block.match(/Facility Classification\s+(Performing|Lost|Substandard|Doubtful|Non.?Performing|Written\s*Off)/i);
     const facilityClassification=classM?classM[1].trim():'Unknown';
 
-    // Extract Instalment Amount
+    // ── Account Status ───────────────────────────────────────────────
+    // Pattern 1: "Account Status Open" / "Account Status Closed" / "Account Status Written Off"
+    let statusM=block.match(/Account Status\s+(Open|Closed|Written\s*Off)(?:\s|$)/i);
+    if(!statusM){
+      // Pattern 2: "Account Status Repayment Frequency <freq> <status>"
+      // e.g. "Account Status Repayment Frequency Open We" or "Account Status Repayment Frequency Not Available Open"
+      statusM=block.match(/Account Status\s+Repayment\s+Frequency\s+(?:Not\s+Available\s+)?(?:\w+\s+)?(Open|Closed|Written\s*Off)/i);
+    }
+    const accountStatus=statusM?statusM[1].trim():'Unknown';
+
+    // Skip closed accounts entirely
+    if(accountStatus.toLowerCase()==='closed')continue;
+
+    // ── Instalment Amount ────────────────────────────────────────────
     const instM=block.match(/Instalment Amount\s+([\d,]+(?:\.\d{2})?)/);
     const instalmentAmount=instM?parseFloat(instM[1].replace(/,/g,'')):0;
 
-    // Extract Outstanding Balance
-    const balM=block.match(/(?:Current Balance|Oustanding Balance|Outstanding Balance)\s+([\d,]+(?:\.\d{2})?)/i);
+    // ── Current Balance (Outstanding) ────────────────────────────────
+    const balM=block.match(/Current Balance\s+([\d,]+(?:\.\d{2})?)/i);
     const outstandingBalance=balM?parseFloat(balM[1].replace(/,/g,'')):0;
 
-    // Extract Loan Duration (in days) for tenor calculation
+    // ── Loan Duration ────────────────────────────────────────────────
     const durM=block.match(/Loan Duration\s+([\d]+)\s*Day/i);
     const loanDurationDays=durM?parseInt(durM[1]):0;
-    // Convert days to months (approximate)
     const loanDurationMonths=loanDurationDays>0?Math.max(1,Math.round(loanDurationDays/30)):0;
 
-    // Extract Availed Limit (loan amount)
-    const limitM=block.match(/(?:Availed Limit|Loan Amount\/Credit Limit)\s+([\d,]+(?:\.\d{2})?)/i);
+    // ── Availed / Credit Limit ───────────────────────────────────────
+    const limitM=block.match(/Loan Amount\/Credit Limit\s+([\d,]+(?:\.\d{2})?)/i);
     const availedLimit=limitM?parseFloat(limitM[1].replace(/,/g,'')):0;
 
-    // Determine if Closed → skip entirely
-    if(accountStatus.toLowerCase()==='closed')continue;
-
     accounts.push({
-      subscriberName,
-      accountNumber,
-      accountStatus,
-      facilityClassification,
-      instalmentAmount,
-      outstandingBalance,
-      loanDurationMonths,
-      availedLimit
+      subscriberName,accountNumber,accountStatus,facilityClassification,
+      instalmentAmount,outstandingBalance,loanDurationMonths,availedLimit
     });
   }
 
-  // Compute effective monthly obligation and flag derogatory
+  // ── Classify accounts ────────────────────────────────────────────────
   let totalMonthlyObligation=0;
   const derogatory=[];
   const performingRows=[];
 
   for(const acc of accounts){
-    const status=acc.accountStatus.toLowerCase();
-    const cls=acc.facilityClassification.toLowerCase();
+    const status=acc.accountStatus.toLowerCase().trim();
+    const cls=acc.facilityClassification.toLowerCase().trim();
+    const isDerogatoryClass=cls==='lost'||cls==='substandard'||cls==='doubtful'||
+                            cls==='non-performing'||cls.includes('written');
+    const isDerogatoryStatus=status==='open'||status.includes('written');
 
-    const isDerogatory=(status==='open'||status==='written off'||status==='written-off')&&
-                       (cls==='lost'||cls==='substandard'||cls==='doubtful'||cls==='non-performing'||cls==='written off');
-
-    if(isDerogatory){
-      if(acc.outstandingBalance>10000){
-        derogatory.push(acc);
-      }
-      continue; // Don't add to monthly obligations
+    if(isDerogatoryClass&&isDerogatoryStatus){
+      // Flag derogatory only if outstanding balance > ₦10k
+      const flagBal=acc.outstandingBalance>0?acc.outstandingBalance:acc.instalmentAmount;
+      if(flagBal>10000)derogatory.push(acc);
+      continue;
     }
 
-    // Open + Performing
+    // Open + Performing → compute monthly obligation
     if(status==='open'&&cls==='performing'){
       let monthlyAmt=0;
       if(acc.instalmentAmount>0){
         monthlyAmt=acc.instalmentAmount;
       }else if(acc.outstandingBalance>0&&acc.loanDurationMonths>0){
-        // Divide outstanding by remaining tenor
         monthlyAmt=acc.outstandingBalance/acc.loanDurationMonths;
-      }else if(acc.outstandingBalance>0&&acc.loanDurationMonths===0&&acc.availedLimit>0){
-        // Fallback: assume 12-month tenor
-        monthlyAmt=acc.outstandingBalance/12;
+      }else if(acc.availedLimit>0&&acc.loanDurationMonths>0){
+        monthlyAmt=acc.availedLimit/acc.loanDurationMonths;
+      }else if(acc.outstandingBalance>0){
+        monthlyAmt=acc.outstandingBalance/12; // fallback 12-mo tenor
       }
       acc.computedMonthly=monthlyAmt;
       totalMonthlyObligation+=monthlyAmt;
