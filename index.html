@@ -663,22 +663,39 @@ function parseFirstCentralSummaryRows(fullText,detailMap){
 function parseFirstCentralDetailMap(fullText){
   const headingRe=/Details of Credit Agreement with "([^"]+)" for Account Number:\s*([^\n\r]+(?:-\r?\n\s*[^\n\r]+)?)/g;
   const detailMap=new Map();
-  let match;
-  while((match=headingRe.exec(fullText))!==null){
+  const matches=[...fullText.matchAll(headingRe)];
+  for(let i=0;i<matches.length;i++){
+    const match=matches[i];
     const subscriberName=(match[1]||'').trim();
     const accountNumber=cleanAccountNumber(match[2]);
     if(!accountNumber)continue;
-    const anchor=fullText.lastIndexOf('24 Months Payment History',match.index);
-    const rawWindow=fullText.slice(anchor>=0?anchor:Math.max(0,match.index-1800),match.index);
-    const windowText=normalizeCreditReportText(rawWindow);
+    const blockStart=match.index;
+    const blockEnd=i<matches.length-1?matches[i+1].index:Math.min(fullText.length,blockStart+5000);
+    const windowText=normalizeCreditReportText(fullText.slice(blockStart,blockEnd));
+    const accountStatus=extractFieldValue(windowText,/Account Status\s+(Closed|Open|Written Off|Lost Written Off|LostWritten Off|WrittenOff)/i)
+      ||extractFieldValue(windowText,/(Closed|Open|Written Off|Lost Written Off|LostWritten Off|WrittenOff)\s+Account Status/i);
+    const facilityClassification=extractFieldValue(windowText,/Facility Classification\s+(Performing|Lost|Derogatory|Delinquent|Non Performing|Non-Performing)/i)
+      ||extractFieldValue(windowText,/(Performing|Lost|Derogatory|Delinquent|Non Performing|Non-Performing)\s+Facility Classification/i);
+    const instalmentAmount=parseCurrencyNumber(
+      extractFieldValue(windowText,/Instalment Amount\s+([\d,]+\.\d{2})/i)
+      ||extractFieldValue(windowText,/([\d,]+\.\d{2})\s+Instalment Amount/i)
+    );
+    const outstandingBalance=parseCurrencyNumber(
+      extractFieldValue(windowText,/Current Balance\s+([\d,]+\.\d{2})/i)
+      ||extractFieldValue(windowText,/([\d,]+\.\d{2})\s+Current Balance/i)
+    );
+    const loanDurationDays=
+      extractFieldValue(windowText,/Loan Duration\s+((?:\d+)|(?:Not Available))\s+Day\(s\)/i)
+      ||extractFieldValue(windowText,/((?:\d+)|(?:Not Available))\s+Day\(s\)\s+Loan Duration/i)
+      ||'Not Available';
     detailMap.set(accountNumber,{
       subscriberName,
-      accountStatus:extractFieldValue(windowText,/(Closed|Open|Written Off|Lost Written Off|LostWritten Off|WrittenOff)\s+Account Status/i)||'Unknown',
-      facilityClassification:extractFieldValue(windowText,/(Performing|Lost|Derogatory|Delinquent|Non Performing|Non-Performing)\s+Facility Classification/i)||'Unknown',
-      instalmentAmount:parseCurrencyNumber(extractFieldValue(windowText,/Instalment Amount\s+([\d,]+\.\d{2})/i)),
-      outstandingBalance:parseCurrencyNumber(extractFieldValue(windowText,/Current Balance\s+([\d,]+\.\d{2})/i)),
-      loanDurationDays:extractFieldValue(windowText,/((?:\d+)|(?:Not Available))\s+Day\(s\)\s+Loan Duration/i)||'Not Available',
-      tenorMonths:getTenorMonthsFromDays(extractFieldValue(windowText,/((?:\d+)|(?:Not Available))\s+Day\(s\)\s+Loan Duration/i))
+      accountStatus:accountStatus||'Unknown',
+      facilityClassification:facilityClassification||'Unknown',
+      instalmentAmount,
+      outstandingBalance,
+      loanDurationDays,
+      tenorMonths:getTenorMonthsFromDays(loanDurationDays)
     });
   }
   return detailMap;
