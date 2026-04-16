@@ -615,7 +615,15 @@ function getTenorMonthsFromDays(rawValue){
 function extractMoneyTokens(text){
   return (String(text||'').match(/[\d,]+\.\d{2}/g)||[]).map(parseCurrencyNumber);
 }
-function parseFirstCentralSummaryRows(fullText){
+function escapeRegexText(text){
+  return String(text||'').replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+}
+function buildFlexibleTextPattern(text){
+  return escapeRegexText(String(text||'').trim())
+    .replace(/\s+/g,'\\s*')
+    .replace(/\\-/g,'\\-\\s*');
+}
+function parseFirstCentralSummaryRows(fullText,detailMap){
   const summaryStart=fullText.indexOf('Credit Agreements Summary');
   const detailsStart=fullText.indexOf('Details of Credit Agreement with');
   if(summaryStart<0||detailsStart<0||detailsStart<=summaryStart)return [];
@@ -628,15 +636,16 @@ function parseFirstCentralSummaryRows(fullText){
     .replace(/Report Extracted on:[^ ]+\s+[^ ]+/gi,' ')
     .trim();
 
-  const rowRe=/(Closed|Open|Written Off|Lost Written Off|LostWritten Off|WrittenOff)\s+(Performing|Lost|Derogatory|Delinquent|Non Performing|Non-Performing)\s+((?:[\d,]+\.\d{2}\s+){1,4})NGN\s+([A-Za-z0-9-]*\d[A-Za-z0-9-]*(?:\s+[A-Za-z0-9-]*\d[A-Za-z0-9-]*)*)\s+(.+?)(?=\s+(?:Closed|Open|Written Off|Lost Written Off|LostWritten Off|WrittenOff)\s+(?:Performing|Lost|Derogatory|Delinquent|Non Performing|Non-Performing)\s+|\s*$)/gi;
   const rows=[];
-  let match;
-  while((match=rowRe.exec(summaryText))!==null){
+  for(const [accountNumber,detail] of detailMap.entries()){
+    const subscriberName=detail.subscriberName||'';
+    if(!subscriberName||!accountNumber)continue;
+    const rowRe=new RegExp(`(Closed|Open|Written Off|Lost Written Off|LostWritten Off|WrittenOff)\\s+(Performing|Lost|Derogatory|Delinquent|Non Performing|Non-Performing)\\s+((?:[\\d,]+\\.\\d{2}\\s+){1,4})NGN\\s+${buildFlexibleTextPattern(accountNumber)}\\s+${buildFlexibleTextPattern(subscriberName)}`,'i');
+    const match=rowRe.exec(summaryText);
+    if(!match)continue;
     const accountStatus=(match[1]||'').trim();
     const facilityClassification=(match[2]||'').trim();
     const figures=extractMoneyTokens(match[3]||'');
-    const accountNumber=cleanAccountNumber(match[4]);
-    const subscriberName=(match[5]||'').trim();
     let arrearAmount=0,instalmentAmount=0,outstandingBalance=0,availedLimit=0;
     if(figures.length>=4){
       [arrearAmount,instalmentAmount,outstandingBalance,availedLimit]=figures.slice(0,4);
@@ -682,17 +691,19 @@ function formatCreditRule(row){
   return 'Monitoring only';
 }
 function parseFirstCentralCreditReport(fullText){
-  const summaryRows=parseFirstCentralSummaryRows(fullText);
   const detailMap=parseFirstCentralDetailMap(fullText);
-  const sourceRows=summaryRows.length?summaryRows:[...detailMap.entries()].map(([accountNumber,detail])=>({
-    subscriberName:detail.subscriberName||'Unknown',
+  const summaryRows=parseFirstCentralSummaryRows(fullText,detailMap);
+  const summaryMap=new Map(summaryRows.map(row=>[row.accountNumber,row]));
+  const sourceRows=[...detailMap.entries()].map(([accountNumber,detail])=>({
+    subscriberName:(summaryMap.get(accountNumber)?.subscriberName)||detail.subscriberName||'Unknown',
     accountNumber,
-    outstandingBalance:detail.outstandingBalance||0,
-    instalmentAmount:detail.instalmentAmount||0,
-    arrearAmount:0,
-    availedLimit:0,
-    facilityClassification:detail.facilityClassification||'Unknown',
-    accountStatus:detail.accountStatus||'Unknown'
+    outstandingBalance:(summaryMap.get(accountNumber)?.outstandingBalance)||detail.outstandingBalance||0,
+    instalmentAmount:(summaryMap.get(accountNumber)?.instalmentAmount)||detail.instalmentAmount||0,
+    arrearAmount:(summaryMap.get(accountNumber)?.arrearAmount)||0,
+    availedLimit:(summaryMap.get(accountNumber)?.availedLimit)||0,
+    figureCount:(summaryMap.get(accountNumber)?.figureCount)||0,
+    facilityClassification:(summaryMap.get(accountNumber)?.facilityClassification)||detail.facilityClassification||'Unknown',
+    accountStatus:(summaryMap.get(accountNumber)?.accountStatus)||detail.accountStatus||'Unknown'
   }));
   const records=sourceRows.map(row=>{
     const detail=detailMap.get(row.accountNumber)||{};
