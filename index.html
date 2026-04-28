@@ -251,6 +251,11 @@ select option{background:var(--surface2)}
       <label>Requested Loan Amount (&#8358;) &#8212; Optional</label>
       <input type="number" id="requested-loan" placeholder="e.g. 3000000">
     </div>
+    <div class="field">
+      <label>Manual Interest Rate (%) &#8212; Optional Override</label>
+      <input type="number" id="manual-rate" placeholder="e.g. 12.5 — leave blank to use rate grid" min="0.01" max="100" step="0.01">
+      <div class="field-note">If entered, overrides the rate grid for both loan amount calculation and display. Leave blank to use the default rate grid.</div>
+    </div>
     <button class="btn btn-primary" onclick="runCalculation()" style="margin-top:8px">
       <span class="spinner" id="calc-spinner"></span>
       <span id="calc-btn-text">&#9654; &nbsp; Calculate Eligibility</span>
@@ -340,77 +345,69 @@ function updateRecycleRow(i){
 // ─── Calculator Logic ────────────────────────────────────────────────────────
 function getInterestRate(a,loc,pt){
   // ── Expansion ──────────────────────────────────────────────────────────
+  // SEL Expansion Proposed - NTB & Top-Up (8 bands from image)
+  // Bands: >100k-199k|200k-299k|300k-409k|410k-619k|620k-749k|750k-919k|920k-1.19m|1.2m+
+  // RB:    35.07%    |19.97%   |17.85%   |18.47%   |16.20%   |17.20%   |15.73%    |14.80%
   if(loc==='Expansion'){
     if(pt==='RENEWAL'){
-      // Expansion Renewal: bands >100k-199k|200k-319k|320k-679k|680k-999k|1m-1.99m|2m+
-      if(a>100000&&a<=199000)return 0.1124;if(a>=200000&&a<=319000)return 0.0834;
-      if(a>=320000&&a<=679000)return 0.0766;if(a>=680000&&a<=999000)return 0.0704;
-      if(a>=1000000&&a<=1999000)return 0.0647;if(a>=2000000)return 0.0521;
+      // SEL Expansion Proposed - Renewal (8 bands)
+      // Bands: >100k-199k|200k-299k|300k-409k|410k-619k|620k-749k|750k-919k|920k-1.19m|1.2m+
+      // RB:    18.94%    |16.05%   |14.26%   |14.26%   |11.90%   |12.16%   |11.32%    |11.01%
+      if(a>100000&&a<=199000)return 0.1894;if(a>=200000&&a<=299000)return 0.1605;
+      if(a>=300000&&a<=409000)return 0.1426;if(a>=410000&&a<=619000)return 0.1426;
+      if(a>=620000&&a<=749000)return 0.1190;if(a>=750000&&a<=919000)return 0.1216;
+      if(a>=920000&&a<=1199000)return 0.1132;if(a>=1200000)return 0.1101;
     }else{
-      // Expansion NTB & Top-Up: bands >100k-199k|200k-319k|320k-679k|680k-999k|1m-1.99m|2m-3.69m|3.7m+
-      if(a>100000&&a<=199000)return 0.1807;if(a>=200000&&a<=319000)return 0.0898;
-      if(a>=320000&&a<=679000)return 0.0880;if(a>=680000&&a<=999000)return 0.0749;
-      if(a>=1000000&&a<=1999000)return 0.0679;if(a>=2000000&&a<=3690000)return 0.0640;
-      if(a>=3700000)return 0.0521;
-    }
-  }
-  // ── Lagos NTB ──────────────────────────────────────────────────────────
-  if(pt==='NTB'){
-    if(loc==='Lagos'){
+      // SEL Expansion Proposed - NTB & Top-Up (8 bands)
       if(a>100000&&a<=199000)return 0.3507;if(a>=200000&&a<=299000)return 0.1997;
       if(a>=300000&&a<=409000)return 0.1785;if(a>=410000&&a<=619000)return 0.1847;
       if(a>=620000&&a<=749000)return 0.1620;if(a>=750000&&a<=919000)return 0.1720;
       if(a>=920000&&a<=1199000)return 0.1573;if(a>=1200000)return 0.1480;
+    }
+  }
+  // ── Lagos NTB ──────────────────────────────────────────────────────────
+  // SEL Lagos Proposed - NTB (4 bands)
+  // Bands: >100k-199k|200k-919k|920k-1.19m|1.2m+
+  // RB:    30.61%    |13.85%   |12.64%    |10.76%
+  if(pt==='NTB'){
+    if(loc==='Lagos'){
+      if(a>100000&&a<=199000)return 0.3061;if(a>=200000&&a<=919000)return 0.1385;
+      if(a>=920000&&a<=1199000)return 0.1264;if(a>=1200000)return 0.1076;
     }else{
-      // Outside Lagos NTB
+      // SEL NTB & Top-Up Outside Lagos (6 bands)
+      // Bands: >100k-199k|200k-299k|300k-749k|750k-919k|920k-1.19m|1.2m+
+      // RB:    36.30%    |18.10%   |15.79%   |14.54%   |13.64%    |10.76%
       if(a>100000&&a<=199000)return 0.3630;if(a>=200000&&a<=299000)return 0.1810;
       if(a>=300000&&a<=749000)return 0.1579;if(a>=750000&&a<=919000)return 0.1454;
       if(a>=920000&&a<=1199000)return 0.1364;if(a>=1200000)return 0.1076;
     }
   }else{
-    // RENEWAL & TOP-UP — Lagos and Outside Lagos share same rate table
-    // Bands: >100k-199k|200k-919k|920k-1.19m|1.2m+  RB: 16.30%|9.34%|7.69%|9.41%
+    // RENEWAL & TOP-UP — Lagos and Outside Lagos (Lagos Proposed - Renewal, 4 bands)
+    // Bands: >100k-199k|200k-919k|920k-1.19m|1.2m+
+    // RB:    16.30%    |9.34%    |7.69%     |9.41%
     if(a>100000&&a<=199000)return 0.1630;if(a>=200000&&a<=919000)return 0.0934;
     if(a>=920000&&a<=1199000)return 0.0769;if(a>=1200000)return 0.0941;
   }
   return null;
 }
 function getRateFromMaxRep(a,loc,pt){
-  // ── Expansion ──────────────────────────────────────────────────────────
-  if(loc==='Expansion'){
-    if(pt==='RENEWAL'){
-      if(a>100000&&a<=199000)return 0.1124;if(a>=200000&&a<=319000)return 0.0834;
-      if(a>=320000&&a<=679000)return 0.0766;if(a>=680000&&a<=999000)return 0.0704;
-      if(a>=1000000&&a<=1999000)return 0.0647;if(a>=2000000)return 0.0521;
-    }else{
-      // NTB & Top-Up use same Expansion NTB rate
-      if(a>100000&&a<=199000)return 0.1807;if(a>=200000&&a<=319000)return 0.0898;
-      if(a>=320000&&a<=679000)return 0.0880;if(a>=680000&&a<=999000)return 0.0749;
-      if(a>=1000000&&a<=1999000)return 0.0679;if(a>=2000000&&a<=3690000)return 0.0640;
-      if(a>=3700000)return 0.0521;
-    }
-  }
-  // ── Lagos NTB ──────────────────────────────────────────────────────────
-  if(pt==='NTB'){
-    if(loc==='Lagos'){
-      if(a>100000&&a<=199000)return 0.3507;if(a>=200000&&a<=299000)return 0.1997;
-      if(a>=300000&&a<=409000)return 0.1785;if(a>=410000&&a<=619000)return 0.1847;
-      if(a>=620000&&a<=749000)return 0.1620;if(a>=750000&&a<=919000)return 0.1720;
-      if(a>=920000&&a<=1199000)return 0.1573;if(a>=1200000)return 0.1480;
-    }else{
-      // Outside Lagos NTB
-      if(a>100000&&a<=199000)return 0.3630;if(a>=200000&&a<=299000)return 0.1810;
-      if(a>=300000&&a<=749000)return 0.1579;if(a>=750000&&a<=919000)return 0.1454;
-      if(a>=920000&&a<=1199000)return 0.1364;if(a>=1200000)return 0.1076;
-    }
-  }else{
-    // RENEWAL & TOP-UP — Lagos and Outside Lagos share same rate table
-    if(a>100000&&a<=199000)return 0.1630;if(a>=200000&&a<=919000)return 0.0934;
-    if(a>=920000&&a<=1199000)return 0.0769;if(a>=1200000)return 0.0941;
-  }
-  return null;
+  // Identical to getInterestRate — same bands, same rates.
+  // getRateFromMaxRep receives the max total repayment as input to find the
+  // rate used for PV back-calculation; getInterestRate receives the final
+  // loan amount for display. Both must use the same rate table per the rate grid.
+  return getInterestRate(a,loc,pt);
 }
-function getDTI(tot,pt){if(pt==='NTB')return 0.075;if(pt==='RENEWAL'||pt==='TOP-UP')return tot>=801000?0.1:0.0;return 0.0;}
+function getDTI(tot,pt,loc){
+  // Expansion NTB: 6%
+  if(loc==='Expansion'&&pt==='NTB')return 0.06;
+  // Expansion Renewal & Top-Up: 8%
+  if(loc==='Expansion'&&(pt==='RENEWAL'||pt==='TOP-UP'))return 0.08;
+  // Lagos & Outside Lagos NTB: 7%
+  if(pt==='NTB')return 0.07;
+  // Lagos & Outside Lagos Renewal & Top-Up: unchanged
+  if(pt==='RENEWAL'||pt==='TOP-UP')return tot>=801000?0.1:0.0;
+  return 0.0;
+}
 function getApplicableTurnover(nets,pt){
   const tot=nets.reduce((a,b)=>a+b,0),avg=tot/nets.length;
   const trimmed=(tot-Math.min(...nets)-Math.max(...nets))/4;
@@ -420,6 +417,17 @@ function pvCalc(r,n,p){if(r===0)return p*n;return p*(1-Math.pow(1+r,-n))/r;}
 function roundUp1000(n){return Math.ceil(n/1000)*1000;}
 function fmt(n){return'\u20a6'+Math.round(n).toLocaleString('en-NG');}
 function fmtPct(n){return n?(n*100).toFixed(2)+'%':'--';}
+
+function applyLoanLimits(pv,loc,pt){
+  // Applies product min/max caps and rounds up to nearest 1000.
+  // Mirrors the min/max logic from the original calculator.
+  const minLoan=loc==='Expansion'?200000:loc==='Lagos'?100000:(pt==='NTB'?200000:500000);
+  const maxLoan=loc==='Expansion'?(pt==='NTB'?3000000:5000000):loc==='Lagos'?10000000:7000000;
+  // Note: loan limits already applied in applyLoanLimits() above
+  if(pv>=minLoan&&pv<=maxLoan)return roundUp1000(pv);
+  if(pv>maxLoan)return maxLoan;
+  return 0;
+}
 
 function runCalculation(){
   const nets=[],counts=[];
@@ -439,24 +447,39 @@ function runCalculation(){
   const avgCount=counts.reduce((a,b)=>a+b,0)/counts.length;
   const repFreq=avgCount>=12?'Weekly':'Monthly';
   const appTurnover=getApplicableTurnover(nets,pt);
-  const dti=getDTI(totalNet,pt);
+  const dti=getDTI(totalNet,pt,loc);
   const maxRepMonthly=Math.max((appTurnover*dti)-otherLoans,0);
   const maxTotalRep=maxRepMonthly*tenor;
-  const rateForPV=getRateFromMaxRep(maxTotalRep,loc,pt);
   const WEEKS=4.33333;
 
+  // Manual rate override — if provided, overrides both PV calculation and display rate
+  const manualRateInput=parseFloat(document.getElementById('manual-rate').value);
+  const manualRate=(manualRateInput>0&&manualRateInput<=100)?(manualRateInput/100):null;
+
+  // ── Two-pass loan calculation (matches Python backend logic) ─────────────
+  // Pass 1: get rate from maxTotalRep band → calculate first PV estimate
+  // Pass 2: get rate from Pass 1 loan amount band → recalculate PV with refined rate
+  // This ensures the rate used always matches the band of the final loan amount.
   let newLoan=0;
-  if(rateForPV&&maxRepMonthly>0){
-    const pv=pvCalc(rateForPV,tenor,maxRepMonthly);
-    if(pt==='NTB'){
-      if(loc==='Lagos'){if(pv>=100000&&pv<=10000000)newLoan=roundUp1000(pv);else if(pv>10000000)newLoan=10000000;}
-      else{if(pv>=200000&&pv<=7000000)newLoan=roundUp1000(pv);else if(pv>7000000)newLoan=7000000;}
+  let intRate=null;
+
+  if(maxRepMonthly>0){
+    if(manualRate!==null){
+      // Manual rate: use directly for both passes (no grid lookup needed)
+      const pv=pvCalc(manualRate,tenor,maxRepMonthly);
+      newLoan=applyLoanLimits(pv,loc,pt);
+      intRate=manualRate;
     }else{
-      if(loc==='Lagos'){if(pv>=200000&&pv<=10000000)newLoan=roundUp1000(pv);else if(pv>10000000)newLoan=10000000;}
-      else{if(pv>=500000&&pv<=7000000)newLoan=roundUp1000(pv);else if(pv>7000000)newLoan=7000000;}
+      // Pass 1: use maxTotalRep to find rate from grid → calculate PV → get loan amount
+      const rate1=getInterestRate(maxTotalRep,loc,pt);
+      if(rate1){
+        const pv1=pvCalc(rate1,tenor,maxRepMonthly);
+        newLoan=applyLoanLimits(pv1,loc,pt);
+        // Pass 2: loop back — use loan amount to find the correct display rate (no PV recalc)
+        intRate=newLoan>0?getInterestRate(newLoan,loc,pt):null;
+      }
     }
   }
-  const intRate=newLoan>0?getInterestRate(newLoan,loc,pt):null;
   const displayRep=repFreq==='Weekly'?maxRepMonthly/WEEKS:maxRepMonthly;
   const minLoan=loc==='Expansion'?200000:loc==='Lagos'?100000:(pt==='NTB'?200000:500000);
   const maxLoan=loc==='Expansion'?(pt==='NTB'?3000000:5000000):loc==='Lagos'?10000000:7000000;
@@ -473,7 +496,9 @@ function runCalculation(){
   document.getElementById('r-turnover').textContent=fmt(appTurnover);
   document.getElementById('r-total').textContent=fmt(totalNet);
   document.getElementById('r-dti').textContent=fmtPct(dti);
-  document.getElementById('r-rate').textContent=intRate?fmtPct(intRate):'--';
+  const rateDisplay=intRate?fmtPct(intRate):'--';
+  document.getElementById('r-rate').textContent=manualRate!==null?rateDisplay+' ★':rateDisplay;
+  document.getElementById('r-rate').title=manualRate!==null?'Manual rate override active':'Rate from grid';
   document.getElementById('r-freq').textContent=repFreq;
   document.getElementById('r-rep').textContent=fmt(displayRep);
   document.getElementById('r-totalrep').textContent=fmt(maxTotalRep);
@@ -482,8 +507,10 @@ function runCalculation(){
   if(reqLoan>0){
     reqSec.style.display='block';
     let reqPmt=0;
-    if(rateForPV&&rateForPV>0)reqPmt=reqLoan*rateForPV/(1-Math.pow(1+rateForPV,-tenor));
-    else if(rateForPV===0)reqPmt=reqLoan/tenor;
+    // Use manual rate if provided, otherwise look up rate for requested loan amount
+    const reqRate=manualRate!==null?manualRate:(getInterestRate(reqLoan,loc,pt)||0);
+    if(reqRate>0)reqPmt=reqLoan*reqRate/(1-Math.pow(1+reqRate,-tenor));
+    else reqPmt=reqLoan/tenor;
     const reqPmtD=repFreq==='Weekly'?reqPmt/WEEKS:reqPmt;
     const reqDTI=appTurnover>0?(reqPmt+otherLoans)/appTurnover:0;
     const within=reqLoan<=newLoan;
