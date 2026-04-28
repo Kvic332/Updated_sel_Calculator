@@ -985,9 +985,13 @@ async function extractCreditReport(){
 // ════════════════════════════════════════════════════════════════════════════
 // RECYCLING CLASSIFIER
 // ════════════════════════════════════════════════════════════════════════════
-function classifyCredit(currentLine,fullContext,accountHolderName){
+function classifyCredit(currentLine,fullContext,accountHolderName,descContext){
   const cl=(currentLine||'').toLowerCase();
   const ctx=(fullContext||'').toLowerCase();
+  // descContext: only the description lines before the transaction amount line.
+  // Used for self-transfer matching to avoid false positives where the account
+  // holder's name appears as the RECIPIENT (not sender) in the narration field.
+  const dCtx=(descContext||fullContext||'').toLowerCase();
   const name=(accountHolderName||'').toLowerCase();
   if(cl.includes('owealth withdrawal')||cl.includes('owealth deposit')||
      cl.includes('owealth interest')||cl.includes('auto-save to owealth')||
@@ -1000,8 +1004,10 @@ function classifyCredit(currentLine,fullContext,accountHolderName){
   if(ctx.includes('stamp duty on electronic funds transfer')||ctx.includes('cbn//')&&ctx.includes('stamp duty'))return 'recycleFunds';
   if(name&&name.length>4){
     const nameParts=name.split(/\s+/).filter(p=>p.length>3);
-    const matched=nameParts.filter(p=>ctx.includes(p)).length;
-    const selfTransferVerb=/\b(received from|transfer from|trf from|from)\b/.test(ctx);
+    // Match name parts against DESCRIPTION context only (not the full transaction line)
+    // This prevents false self-transfer flags when the name appears as the recipient
+    const matched=nameParts.filter(p=>dCtx.includes(p)).length;
+    const selfTransferVerb=/\b(received from|transfer from|trf from|from)\b/.test(dCtx);
     if(selfTransferVerb&&matched>=2)return 'selfTransfer';
   }
   if(cl.includes('sportybet')||cl.includes('sporty|')||cl.includes('betnaija')||
@@ -1012,11 +1018,11 @@ function classifyCredit(currentLine,fullContext,accountHolderName){
   return 'realCredit';
 }
 
-function addCreditClassified(monthly,ym,amount,contextWindow,accountHolderName,currentLine){
+function addCreditClassified(monthly,ym,amount,contextWindow,accountHolderName,currentLine,descContext){
   if(!ym||!amount||amount<=0)return;
   if(!monthly[ym])monthly[ym]={gross:0,count:0,internalMove:0,selfTransfer:0,loanDisbursement:0,recycleFunds:0,realCredit:0,label:ymToLabel(ym)};
   monthly[ym].gross+=amount;monthly[ym].count++;
-  const cat=classifyCredit(currentLine||contextWindow,contextWindow,accountHolderName);
+  const cat=classifyCredit(currentLine||contextWindow,contextWindow,accountHolderName,descContext);
   monthly[ym][cat]=(monthly[ym][cat]||0)+amount;
 }
 
@@ -1335,7 +1341,8 @@ function parseOpayLayout(pages,fullText){
     const amt=extractOpayCreditAmountFromRow(row);
     if(!amt||!currentYM)continue;
     const context=getOpayContextWindow(rows,i);
-    addCreditClassified(monthly,currentYM,amt,context,accountName,context);
+    const descCtx=getOpayDescContext(rows,i);
+    addCreditClassified(monthly,currentYM,amt,context,accountName,context,descCtx);
   }
   return monthly;
 }
@@ -1365,6 +1372,17 @@ function getOpayContextWindow(rows,index){
   for(let j=Math.max(0,index-2);j<=Math.min(rows.length-1,index+1);j++){
     const row=rows[j];
     if(j===index||!rowHasOpayAmountColumns(row))parts.push(row.text);
+  }
+  return parts.join(' ');
+}
+function getOpayDescContext(rows,index){
+  // Returns ONLY lines before the amount row — i.e. the description lines.
+  // Used for self-transfer name matching to avoid false positives when
+  // the account holder's name appears as the RECIPIENT in the transaction line.
+  const parts=[];
+  for(let j=Math.max(0,index-2);j<index;j++){
+    const row=rows[j];
+    if(!rowHasOpayAmountColumns(row))parts.push(row.text);
   }
   return parts.join(' ');
 }
@@ -1438,7 +1456,9 @@ function parseGenericMoneyInTable(pages,fullText,bankHint=''){
       }
     }
     if(!credit||credit<=0)continue;
-    addCreditClassified(monthly,ym,credit,text,accountName,text);
+    // descCtx: lines after the date line (pure description, no date/amount mixing)
+    const descCtxG=block.lines.slice(1).join(' ');
+    addCreditClassified(monthly,ym,credit,text,accountName,text,descCtxG);
   }
   return monthly;
 }
@@ -1467,7 +1487,10 @@ function parseIsoDebitCreditTable(pages,fullText){
       const debit=nums[nums.length-3];const credit=nums[nums.length-2];
       if(debit!==0||!(credit>0))continue;
       if(/electronic money transfer levy|_emtl_dc_|charge\+vat|stamp duty/i.test(block))continue;
-      addCreditClassified(monthly,ym,credit,block,accountName,block);
+      // descCtx: everything after the ISO timestamp line (the description continuation)
+      const isoLines=block.split(' ');
+      const descCtxI=isoLines.slice(1).join(' ');
+      addCreditClassified(monthly,ym,credit,block,accountName,block,descCtxI);
     }
   }
   return monthly;
@@ -1745,7 +1768,11 @@ function parseKudaStructuredStatementV3(pages){
     const signature=`${dateLine}|${timeLine}|${amount.toFixed(2)}|${block.slice(0,7).join('|')}`;
     if(seen.has(signature))continue;
     seen.add(signature);
-    addCreditClassified(monthly,ym,amount,blockText,accountName,blockText);
+    // descCtx: block lines excluding date line and amount/time lines (pure description)
+    const descCtxK=block.filter(line=>
+      line!==dateLine && line!==timeLine && line!==amountLine
+    ).join(' ');
+    addCreditClassified(monthly,ym,amount,blockText,accountName,blockText,descCtxK||blockText);
   }
   return monthly;
 }
