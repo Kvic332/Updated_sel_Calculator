@@ -221,6 +221,7 @@ select option{background:var(--surface2)}
         <select id="location">
           <option value="Lagos">Lagos</option>
           <option value="Outside Lagos">Outside Lagos</option>
+          <option value="Expansion">Expansion</option>
         </select>
       </div>
       <div class="field">
@@ -338,48 +339,76 @@ function updateRecycleRow(i){
 
 // ─── Calculator Logic ────────────────────────────────────────────────────────
 function getInterestRate(a,loc,pt){
+  // ── Expansion ──────────────────────────────────────────────────────────
+  if(loc==='Expansion'){
+    if(pt==='RENEWAL'){
+      // Expansion Renewal: bands >100k-199k|200k-319k|320k-679k|680k-999k|1m-1.99m|2m+
+      if(a>100000&&a<=199000)return 0.1124;if(a>=200000&&a<=319000)return 0.0834;
+      if(a>=320000&&a<=679000)return 0.0766;if(a>=680000&&a<=999000)return 0.0704;
+      if(a>=1000000&&a<=1999000)return 0.0647;if(a>=2000000)return 0.0521;
+    }else{
+      // Expansion NTB & Top-Up: bands >100k-199k|200k-319k|320k-679k|680k-999k|1m-1.99m|2m-3.69m|3.7m+
+      if(a>100000&&a<=199000)return 0.1807;if(a>=200000&&a<=319000)return 0.0898;
+      if(a>=320000&&a<=679000)return 0.0880;if(a>=680000&&a<=999000)return 0.0749;
+      if(a>=1000000&&a<=1999000)return 0.0679;if(a>=2000000&&a<=3690000)return 0.0640;
+      if(a>=3700000)return 0.0521;
+    }
+  }
+  // ── Lagos NTB ──────────────────────────────────────────────────────────
   if(pt==='NTB'){
     if(loc==='Lagos'){
-      if(a>100000&&a<=199000)return 0.3561;if(a>=200000&&a<=919999)return 0.1885;
-      if(a>=920000&&a<=1199999)return 0.1664;if(a>=1200000)return 0.1376;
+      if(a>100000&&a<=199000)return 0.3507;if(a>=200000&&a<=299000)return 0.1997;
+      if(a>=300000&&a<=409000)return 0.1785;if(a>=410000&&a<=619000)return 0.1847;
+      if(a>=620000&&a<=749000)return 0.1620;if(a>=750000&&a<=919000)return 0.1720;
+      if(a>=920000&&a<=1199000)return 0.1573;if(a>=1200000)return 0.1480;
     }else{
-      if(a>100000&&a<=199000)return 0.413;if(a>=200000&&a<=299000)return 0.231;
-      if(a>=300000&&a<=749000)return 0.2079;if(a>=750000&&a<=919999)return 0.1854;
-      if(a>=920000&&a<=1199999)return 0.1638;if(a>=1200000)return 0.1376;
+      // Outside Lagos NTB
+      if(a>100000&&a<=199000)return 0.3630;if(a>=200000&&a<=299000)return 0.1810;
+      if(a>=300000&&a<=749000)return 0.1579;if(a>=750000&&a<=919000)return 0.1454;
+      if(a>=920000&&a<=1199000)return 0.1364;if(a>=1200000)return 0.1076;
     }
-  }else{const iT=pt==='TOP-UP';
-    if(loc==='Lagos'){
-      if(a>100000&&a<=199000)return iT?0.3561:0.213;if(a>=200000&&a<=919999)return iT?0.1885:0.1434;
-      if(a>=920000&&a<=1199999)return iT?0.1664:0.1269;if(a>=1200000)return iT?0.1376:0.1077;
-    }else{
-      if(a>100000&&a<=199000)return iT?0.413:0.213;if(a>=200000&&a<=299000)return iT?0.231:0.1434;
-      if(a>=300000&&a<=749000)return iT?0.2079:0.1434;if(a>=750000&&a<=919999)return iT?0.1854:0.1434;
-      if(a>=920000&&a<=1199999)return iT?0.1638:0.1269;if(a>=1200000)return iT?0.1376:0.1077;
-    }
-  }return null;
+  }else{
+    // RENEWAL & TOP-UP — Lagos and Outside Lagos share same rate table
+    // Bands: >100k-199k|200k-919k|920k-1.19m|1.2m+  RB: 16.30%|9.34%|7.69%|9.41%
+    if(a>100000&&a<=199000)return 0.1630;if(a>=200000&&a<=919000)return 0.0934;
+    if(a>=920000&&a<=1199000)return 0.0769;if(a>=1200000)return 0.0941;
+  }
+  return null;
 }
 function getRateFromMaxRep(a,loc,pt){
+  // ── Expansion ──────────────────────────────────────────────────────────
+  if(loc==='Expansion'){
+    if(pt==='RENEWAL'){
+      if(a>100000&&a<=199000)return 0.1124;if(a>=200000&&a<=319000)return 0.0834;
+      if(a>=320000&&a<=679000)return 0.0766;if(a>=680000&&a<=999000)return 0.0704;
+      if(a>=1000000&&a<=1999000)return 0.0647;if(a>=2000000)return 0.0521;
+    }else{
+      // NTB & Top-Up use same Expansion NTB rate
+      if(a>100000&&a<=199000)return 0.1807;if(a>=200000&&a<=319000)return 0.0898;
+      if(a>=320000&&a<=679000)return 0.0880;if(a>=680000&&a<=999000)return 0.0749;
+      if(a>=1000000&&a<=1999000)return 0.0679;if(a>=2000000&&a<=3690000)return 0.0640;
+      if(a>=3700000)return 0.0521;
+    }
+  }
+  // ── Lagos NTB ──────────────────────────────────────────────────────────
   if(pt==='NTB'){
     if(loc==='Lagos'){
-      if(a>100000&&a<=199000)return 0.396;if(a>=200000&&a<=299000)return 0.222;
-      if(a>=300000&&a<=409000)return 0.1998;if(a>=410000&&a<=619000)return 0.2052;
-      if(a>=620000&&a<=749000)return 0.1854;if(a>=750000&&a<=919000)return 0.1854;
-      if(a>=920000&&a<=1190000)return 0.1638;if(a>=1220000)return 0.1557;
+      if(a>100000&&a<=199000)return 0.3507;if(a>=200000&&a<=299000)return 0.1997;
+      if(a>=300000&&a<=409000)return 0.1785;if(a>=410000&&a<=619000)return 0.1847;
+      if(a>=620000&&a<=749000)return 0.1620;if(a>=750000&&a<=919000)return 0.1720;
+      if(a>=920000&&a<=1199000)return 0.1573;if(a>=1200000)return 0.1480;
     }else{
-      if(a>100000&&a<=199000)return 0.413;if(a>=200000&&a<=299000)return 0.231;
-      if(a>=300000&&a<=409000)return 0.2079;if(a>=410000&&a<=619000)return 0.2079;
-      if(a>=620000&&a<=749000)return 0.2079;if(a>=750000&&a<=919000)return 0.1854;
-      if(a>=920000&&a<=1190000)return 0.1638;if(a>=1220000)return 0.1557;
+      // Outside Lagos NTB
+      if(a>100000&&a<=199000)return 0.3630;if(a>=200000&&a<=299000)return 0.1810;
+      if(a>=300000&&a<=749000)return 0.1579;if(a>=750000&&a<=919000)return 0.1454;
+      if(a>=920000&&a<=1199000)return 0.1364;if(a>=1200000)return 0.1076;
     }
-  }else{const iT=pt==='TOP-UP';
-    if(loc==='Lagos'){
-      if(a>100000&&a<=199000)return iT?0.2683:0.1777;if(a>=200000&&a<=299000)return iT?0.1707:0.1447;
-      if(a>=300000&&a<=409000)return iT?0.1544:0.1306;if(a>=410000)return iT?0.1343:0.1132;
-    }else{
-      if(a>100000&&a<=199000)return iT?0.2683:0.1777;if(a>=200000&&a<=299000)return iT?0.1707:0.1447;
-      if(a>=300000&&a<=409000)return iT?0.1544:0.1306;if(a>=410000)return iT?0.1343:0.1132;
-    }
-  }return null;
+  }else{
+    // RENEWAL & TOP-UP — Lagos and Outside Lagos share same rate table
+    if(a>100000&&a<=199000)return 0.1630;if(a>=200000&&a<=919000)return 0.0934;
+    if(a>=920000&&a<=1199000)return 0.0769;if(a>=1200000)return 0.0941;
+  }
+  return null;
 }
 function getDTI(tot,pt){if(pt==='NTB')return 0.08;if(pt==='RENEWAL'||pt==='TOP-UP')return tot>=801000?0.1:0.0;return 0.0;}
 function getApplicableTurnover(nets,pt){
@@ -429,8 +458,8 @@ function runCalculation(){
   }
   const intRate=newLoan>0?getInterestRate(newLoan,loc,pt):null;
   const displayRep=repFreq==='Weekly'?maxRepMonthly/WEEKS:maxRepMonthly;
-  const minLoan=loc==='Lagos'?100000:(pt==='NTB'?200000:500000);
-  const maxLoan=loc==='Lagos'?10000000:7000000;
+  const minLoan=loc==='Expansion'?200000:loc==='Lagos'?100000:(pt==='NTB'?200000:500000);
+  const maxLoan=loc==='Expansion'?(pt==='NTB'?3000000:5000000):loc==='Lagos'?10000000:7000000;
   const approved=newLoan>=minLoan&&newLoan<=maxLoan;
   const decision=newLoan<minLoan?'Below product minimum':approved?'Max loan amount':'Invalid Loan Amount';
 
@@ -966,7 +995,7 @@ function classifyCredit(currentLine,fullContext,accountHolderName){
     return 'internalMove';
   const loanKw=['okash','easemoni','fairmoney','renmoney','palmcredit','branch loan',
                 'carbon ','migo ','lidya ','zedvance','creditwave','quickcheck',
-                'loan disburs','credit disburs','disbursement'];
+                'loan disburs','credit disburs','disbursement','loan', 'Loan'];
   if(loanKw.some(k=>ctx.includes(k)))return 'loanDisbursement';
   if(ctx.includes('stamp duty on electronic funds transfer')||ctx.includes('cbn//')&&ctx.includes('stamp duty'))return 'recycleFunds';
   if(name&&name.length>4){
@@ -1839,7 +1868,7 @@ function fillInflowFields(data,bankName){
     <span class="legend-pill pill-gross">Total Inflow = all credits received</span>
     ${hasNonUsable?'<span class="legend-pill pill-nousable">Non-Usable = OWealth round-trips &amp; betting winbacks</span>':''}
     ${hasInternal?'<span class="legend-pill pill-internal">Internal Movements = own-name transfers from other banks</span>':''}
-    ${hasObligation?'<span class="legend-pill pill-obligation">External Obligations = loan disbursals (OKash, EaseMoni, Renmoney…)</span>':''}
+    ${hasObligation?'<span class="legend-pill pill-obligation">External Obligations = loan disbursals (OKash, Kuda, EaseMoni, Renmoney…)</span>':''}
     <span class="legend-pill pill-net">Eligible Income = verified usable income for underwriting</span>
   </div>`;
 
@@ -1858,7 +1887,7 @@ function fillInflowFields(data,bankName){
     if(tot.internalMove>0)html+=`<div class="recycle-row"><span>Non-Usable — OWealth / Internal Wallet Round-Trips</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.internalMove).toLocaleString('en-NG')}</span></div>`;
     if(tot.recycleFunds>0)html+=`<div class="recycle-row"><span>Non-Usable — Betting / Gambling Winbacks</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.recycleFunds).toLocaleString('en-NG')}</span></div>`;
     if(tot.selfTransfer>0)html+=`<div class="recycle-row"><span>Internal Movements — Own-Name Transfers (other banks → this account)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.selfTransfer).toLocaleString('en-NG')}</span></div>`;
-    if(tot.loanDisbursement>0)html+=`<div class="recycle-row"><span>External Obligations — Loan Disbursals (OKash, EaseMoni, Renmoney…)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.loanDisbursement).toLocaleString('en-NG')}</span></div>`;
+    if(tot.loanDisbursement>0)html+=`<div class="recycle-row"><span>External Obligations — Loan Disbursals (OKash, Kuda, EaseMoni, Renmoney…)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.loanDisbursement).toLocaleString('en-NG')}</span></div>`;
     html+=`<div class="recycle-row"><span>Total Non-Eligible Deductions</span><span>\u2212\u20a6${Math.round(totalDeducted).toLocaleString('en-NG')}</span></div>`;
     document.getElementById('recycle-rows').innerHTML=html;
   }
