@@ -995,7 +995,7 @@ function classifyCredit(currentLine,fullContext,accountHolderName){
     return 'internalMove';
   const loanKw=['okash','easemoni','fairmoney','renmoney','palmcredit','branch loan',
                 'carbon ','migo ','lidya ','zedvance','creditwave','quickcheck',
-                'loan disburs','credit disburs','disbursement','loan', 'Loan'];
+                'loan disburs','credit disburs','disbursement'];
   if(loanKw.some(k=>ctx.includes(k)))return 'loanDisbursement';
   if(ctx.includes('stamp duty on electronic funds transfer')||ctx.includes('cbn//')&&ctx.includes('stamp duty'))return 'recycleFunds';
   if(name&&name.length>4){
@@ -1868,7 +1868,7 @@ function fillInflowFields(data,bankName){
     <span class="legend-pill pill-gross">Total Inflow = all credits received</span>
     ${hasNonUsable?'<span class="legend-pill pill-nousable">Non-Usable = OWealth round-trips &amp; betting winbacks</span>':''}
     ${hasInternal?'<span class="legend-pill pill-internal">Internal Movements = own-name transfers from other banks</span>':''}
-    ${hasObligation?'<span class="legend-pill pill-obligation">External Obligations = loan disbursals (OKash, Kuda, EaseMoni, Renmoney…)</span>':''}
+    ${hasObligation?'<span class="legend-pill pill-obligation">External Obligations = loan disbursals (OKash, EaseMoni, Renmoney…)</span>':''}
     <span class="legend-pill pill-net">Eligible Income = verified usable income for underwriting</span>
   </div>`;
 
@@ -1887,7 +1887,7 @@ function fillInflowFields(data,bankName){
     if(tot.internalMove>0)html+=`<div class="recycle-row"><span>Non-Usable — OWealth / Internal Wallet Round-Trips</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.internalMove).toLocaleString('en-NG')}</span></div>`;
     if(tot.recycleFunds>0)html+=`<div class="recycle-row"><span>Non-Usable — Betting / Gambling Winbacks</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.recycleFunds).toLocaleString('en-NG')}</span></div>`;
     if(tot.selfTransfer>0)html+=`<div class="recycle-row"><span>Internal Movements — Own-Name Transfers (other banks → this account)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.selfTransfer).toLocaleString('en-NG')}</span></div>`;
-    if(tot.loanDisbursement>0)html+=`<div class="recycle-row"><span>External Obligations — Loan Disbursals (OKash, Kuda, EaseMoni, Renmoney…)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.loanDisbursement).toLocaleString('en-NG')}</span></div>`;
+    if(tot.loanDisbursement>0)html+=`<div class="recycle-row"><span>External Obligations — Loan Disbursals (OKash, EaseMoni, Renmoney…)</span><span style="color:var(--orange)">\u2212\u20a6${Math.round(tot.loanDisbursement).toLocaleString('en-NG')}</span></div>`;
     html+=`<div class="recycle-row"><span>Total Non-Eligible Deductions</span><span>\u2212\u20a6${Math.round(totalDeducted).toLocaleString('en-NG')}</span></div>`;
     document.getElementById('recycle-rows').innerHTML=html;
   }
