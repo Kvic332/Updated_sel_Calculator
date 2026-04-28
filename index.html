@@ -410,7 +410,7 @@ function getRateFromMaxRep(a,loc,pt){
   }
   return null;
 }
-function getDTI(tot,pt){if(pt==='NTB')return 0.08;if(pt==='RENEWAL'||pt==='TOP-UP')return tot>=801000?0.1:0.0;return 0.0;}
+function getDTI(tot,pt){if(pt==='NTB')return 0.075;if(pt==='RENEWAL'||pt==='TOP-UP')return tot>=801000?0.1:0.0;return 0.0;}
 function getApplicableTurnover(nets,pt){
   const tot=nets.reduce((a,b)=>a+b,0),avg=tot/nets.length;
   const trimmed=(tot-Math.min(...nets)-Math.max(...nets))/4;
