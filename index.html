@@ -1267,8 +1267,12 @@ async function extractPDF(file){
 function ok(m){return Object.keys(m).length>0;}
 
 function buildSortedMonths(monthly){
+  // Exclude the current (incomplete) month — always use only fully concluded months.
+  // e.g. if today is April 2026, drop April 2026 before slicing the last 6.
+  const now=new Date();
+  const currentYM=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   return Object.entries(monthly)
-    .filter(([ym,v])=>/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)&&v.gross>0)
+    .filter(([ym,v])=>/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)&&v.gross>0&&ym<currentYM)
     .sort(([a],[b])=>a.localeCompare(b))
     .slice(-6)
     .map(([ym,v])=>({...v,label:v.label||ymToLabel(ym)}));
