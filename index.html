@@ -483,7 +483,9 @@ function runCalculation(){
 
   const totalNet=nets.reduce((a,b)=>a+b,0);
   const avgCount=counts.reduce((a,b)=>a+b,0)/counts.length;
-  const repFreq=avgCount>=12?'Weekly':'Monthly';
+  // If ANY month has fewer than 12 transactions, use Monthly repayment
+  const anyMonthBelowThreshold=counts.some(c=>c<12);
+  const repFreq=(!anyMonthBelowThreshold&&avgCount>=12)?'Weekly':'Monthly';
   const appTurnover=getApplicableTurnover(nets,pt);
   const dti=getDTI(totalNet,pt,loc);
   const maxRepMonthly=Math.max((appTurnover*dti)-otherLoans,0);
@@ -854,23 +856,56 @@ function renderValidationReport(report){
 // Used by second statement extraction to get data without touching the inflow fields
 async function extractExcelRaw(file){
   const ab=await file.arrayBuffer();
-  const wb=XLSX.read(ab,{type:'array',cellDates:true});
+  // First pass: raw:true to detect format via serial numbers
+  const wb=XLSX.read(ab,{type:'array',cellDates:false});
   const ws=wb.Sheets[wb.SheetNames[0]];
-  const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
+  const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''});
+  const fmt=detectMonthlyExcelFormat(rows);
+  if(fmt&&fmt.type==='moniepoint_business'){
+    const hdrIdx=fmt.hdrIdx;
+    const dateCol=fmt.dateCol,narrationCol=fmt.narrationCol,creditCol=fmt.creditCol;
+    let accountName='';
+    for(let i=0;i<hdrIdx;i++){
+      for(let c=0;c<rows[i].length;c++){
+        const cv=String(rows[i][c]||'').toLowerCase().trim();
+        if(cv==='account name:'||cv==='account name'){
+          for(let nc=c+1;nc<rows[i].length;nc++){
+            const nv=String(rows[i][nc]||'').trim();
+            if(nv){accountName=nv.replace(/-+$/,'').trim();break;}
+          }
+          break;
+        }
+      }
+      if(accountName)break;
+    }
+    const monthly={};
+    for(let i=hdrIdx+1;i<rows.length;i++){
+      const row=rows[i];if(!row||!row[dateCol])continue;
+      const ym=excelSerialToYM(row[dateCol]);if(!ym)continue;
+      const credit=parseFloat(String(row[creditCol]||'').replace(/[,\s]/g,''))||0;
+      if(credit<=0)continue;
+      addCreditClassified(monthly,ym,credit,String(row[narrationCol]||''),accountName);
+    }
+    return monthly;
+  }
+  // Standard Mono Excel format
+  const wb2=XLSX.read(ab,{type:'array',cellDates:true});
+  const ws2=wb2.Sheets[wb2.SheetNames[0]];
+  const rows2=XLSX.utils.sheet_to_json(ws2,{header:1,raw:false,defval:''});
   let hdrIdx=-1;
-  for(let i=0;i<Math.min(rows.length,35);i++){
-    if(String(rows[i][0]||'').toLowerCase().trim()==='transaction date'){hdrIdx=i;break;}
+  for(let i=0;i<Math.min(rows2.length,35);i++){
+    if(String(rows2[i][0]||'').toLowerCase().trim()==='transaction date'){hdrIdx=i;break;}
   }
   if(hdrIdx===-1){
-    for(let i=0;i<Math.min(rows.length,35);i++){
-      const s=rows[i].map(c=>String(c||'').toLowerCase()).join('|');
+    for(let i=0;i<Math.min(rows2.length,35);i++){
+      const s=rows2[i].map(c=>String(c||'').toLowerCase()).join('|');
       if(s.includes('credit')&&s.includes('debit')&&s.includes('date')){hdrIdx=i;break;}
     }
   }
   if(hdrIdx===-1)return {};
   let accountName='';
-  for(let i=0;i<hdrIdx;i++){const c0=String(rows[i][0]||'').toLowerCase();if(c0==='name'){accountName=String(rows[i][1]||'');break;}}
-  const hdr=rows[hdrIdx].map(c=>String(c||'').toLowerCase().trim());
+  for(let i=0;i<hdrIdx;i++){const c0=String(rows2[i][0]||'').toLowerCase();if(c0==='name'){accountName=String(rows2[i][1]||'');break;}}
+  const hdr=rows2[hdrIdx].map(c=>String(c||'').toLowerCase().trim());
   let dateCol=0,creditCol=2,narrationCol=5;
   for(let c=0;c<hdr.length;c++){
     if(hdr[c]==='transaction date'||(dateCol===0&&hdr[c].includes('date')))dateCol=c;
@@ -878,8 +913,8 @@ async function extractExcelRaw(file){
     if(hdr[c]==='narration'||hdr[c].includes('narrat')||hdr[c].includes('description'))narrationCol=c;
   }
   const monthly={};
-  for(let i=hdrIdx+1;i<rows.length;i++){
-    const row=rows[i];if(!row||row.length<3)continue;
+  for(let i=hdrIdx+1;i<rows2.length;i++){
+    const row=rows2[i];if(!row||row.length<3)continue;
     const rd=String(row[dateCol]||'').trim();
     const dm=/^(20\d{2})-(\d{2})/.exec(rd);if(!dm)continue;
     const ym=dm[1]+'-'+dm[2];
@@ -1394,28 +1429,125 @@ function ymToLabel(ym){const[yr,mo]=ym.split('-');return MONTH_ABBR[parseInt(mo)
 // ════════════════════════════════════════════════════════════════════════════
 // MONO EXCEL PARSER
 // ════════════════════════════════════════════════════════════════════════════
+// Helper: convert Excel serial date number to YYYY-MM string
+function excelSerialToYM(serial){
+  const f=parseFloat(serial);
+  if(isNaN(f)||f<40000||f>60000)return null; // sanity range: ~2009-2064
+  const base=new Date(1899,11,30); // Dec 30 1899
+  const dt=new Date(base.getTime()+Math.floor(f)*86400000);
+  return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0');
+}
+
+// Detect if Excel file is the Moniepoint Business format:
+// Header row contains Date, Narration, Debit, Credit (may have gaps between columns)
+// Dates are Excel serial numbers, Account name is in "Account Name:" row
+function detectMonthlyExcelFormat(rows){
+  for(let i=0;i<Math.min(rows.length,20);i++){
+    const h=rows[i].map(c=>String(c||'').toLowerCase().trim());
+    // Check that row contains date, narration, debit, credit — regardless of position
+    const hasDate=h.some(v=>v==='date');
+    const hasNarration=h.some(v=>v==='narration');
+    const hasDebit=h.some(v=>v==='debit');
+    const hasCredit=h.some(v=>v==='credit');
+    // Also confirm first data row has a numeric serial date (>40000)
+    if(hasDate&&hasNarration&&hasDebit&&hasCredit){
+      // Verify next row has a numeric serial date
+      if(i+1<rows.length){
+        const nextRow=rows[i+1];
+        const firstVal=parseFloat(String(nextRow[0]||''));
+        if(!isNaN(firstVal)&&firstVal>40000&&firstVal<70000){
+          // Find actual column indices
+          const dateCol=h.indexOf('date');
+          const narrationCol=h.indexOf('narration');
+          const debitCol=h.indexOf('debit');
+          const creditCol=h.indexOf('credit');
+          return {type:'moniepoint_business',hdrIdx:i,dateCol,narrationCol,debitCol,creditCol};
+        }
+      }
+    }
+  }
+  return null;
+}
+
 async function extractExcel(file){
   const ab=await file.arrayBuffer();
-  const wb=XLSX.read(ab,{type:'array',cellDates:true});
+  // Use raw:true to get serial numbers for dates, not formatted strings
+  const wb=XLSX.read(ab,{type:'array',cellDates:false});
   const ws=wb.Sheets[wb.SheetNames[0]];
-  const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
+  const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''});
+
+  // ── Detect format ───────────────────────────────────────────────────────
+  const fmt=detectMonthlyExcelFormat(rows);
+
+  if(fmt&&fmt.type==='moniepoint_business'){
+    // ── Moniepoint Business Excel format ───────────────────────────────────
+    const hdrIdx=fmt.hdrIdx;
+    const dateCol=fmt.dateCol,narrationCol=fmt.narrationCol,creditCol=fmt.creditCol;
+    let accountName='';
+    // Account name is in row with "Account Name:" — may be at col 0 or 2 (sparse layout)
+    for(let i=0;i<hdrIdx;i++){
+      for(let c=0;c<rows[i].length;c++){
+        const cv=String(rows[i][c]||'').toLowerCase().trim();
+        if(cv==='account name:'||cv==='account name'){
+          // Name is in next non-empty cell
+          for(let nc=c+1;nc<rows[i].length;nc++){
+            const nv=String(rows[i][nc]||'').trim();
+            if(nv){accountName=nv.replace(/-+$/,'').trim();break;}
+          }
+          break;
+        }
+      }
+      if(accountName)break;
+    }
+    const monthly={};
+    for(let i=hdrIdx+1;i<rows.length;i++){
+      const row=rows[i];
+      if(!row||!row[dateCol])continue;
+      const ym=excelSerialToYM(row[dateCol]);
+      if(!ym)continue;
+      const credit=parseFloat(String(row[creditCol]||'').replace(/[,\s]/g,''))||0;
+      if(credit<=0)continue;
+      const narration=String(row[narrationCol]||'');
+      addCreditClassified(monthly,ym,credit,narration,accountName);
+    }
+    const sorted=buildSortedMonths(monthly);
+    if(!sorted.length){showStatus('No credit transactions found in Moniepoint Business Excel statement.','error');return;}
+    fillInflowFields(sorted,accountName||'Moniepoint Business');
+    const xlMonthly=normalizeMonthlyMap(monthly);
+    currentExtractionReport={monthly:xlMonthly,bankName:'Moniepoint Business',parserName:'Moniepoint Business Excel Parser'};
+    if(currentMonthlyB)mergeAndFillInflows();
+    renderValidationReport({
+      bankName:'Moniepoint Business',parserName:'Moniepoint Business Excel Parser',confidenceScore:0.85,
+      summaryMatched:false,coverageIssue:false,
+      warnings:['Moniepoint Business Excel format detected. Date columns are Excel serial numbers — parsed correctly.'],
+      notes:[]
+    });
+    showStatus('Extracted '+sorted.length+' months from Moniepoint Business Excel statement','success');
+    return;
+  }
+
+  // ── Standard Mono Excel format ──────────────────────────────────────────
+  // Re-read with cellDates:true for formatted date strings
+  const wb2=XLSX.read(ab,{type:'array',cellDates:true});
+  const ws2=wb2.Sheets[wb2.SheetNames[0]];
+  const rows2=XLSX.utils.sheet_to_json(ws2,{header:1,raw:false,defval:''});
   let hdrIdx=-1;
-  for(let i=0;i<Math.min(rows.length,35);i++){
-    if(String(rows[i][0]||'').toLowerCase().trim()==='transaction date'){hdrIdx=i;break;}
+  for(let i=0;i<Math.min(rows2.length,35);i++){
+    if(String(rows2[i][0]||'').toLowerCase().trim()==='transaction date'){hdrIdx=i;break;}
   }
   if(hdrIdx===-1){
-    for(let i=0;i<Math.min(rows.length,35);i++){
-      const s=rows[i].map(c=>String(c||'').toLowerCase()).join('|');
+    for(let i=0;i<Math.min(rows2.length,35);i++){
+      const s=rows2[i].map(c=>String(c||'').toLowerCase()).join('|');
       if(s.includes('credit')&&s.includes('debit')&&s.includes('date')){hdrIdx=i;break;}
     }
   }
   if(hdrIdx===-1){showStatus('Could not locate transaction header in Excel file.','error');return;}
   let accountName='';
   for(let i=0;i<hdrIdx;i++){
-    const c0=String(rows[i][0]||'').toLowerCase();
-    if(c0==='name'){accountName=String(rows[i][1]||'');break;}
+    const c0=String(rows2[i][0]||'').toLowerCase();
+    if(c0==='name'){accountName=String(rows2[i][1]||'');break;}
   }
-  const hdr=rows[hdrIdx].map(c=>String(c||'').toLowerCase().trim());
+  const hdr=rows2[hdrIdx].map(c=>String(c||'').toLowerCase().trim());
   let dateCol=0,creditCol=2,narrationCol=5;
   for(let c=0;c<hdr.length;c++){
     if(hdr[c]==='transaction date'||(dateCol===0&&hdr[c].includes('date')))dateCol=c;
@@ -1423,8 +1555,8 @@ async function extractExcel(file){
     if(hdr[c]==='narration'||hdr[c].includes('narrat')||hdr[c].includes('description'))narrationCol=c;
   }
   const monthly={};
-  for(let i=hdrIdx+1;i<rows.length;i++){
-    const row=rows[i];
+  for(let i=hdrIdx+1;i<rows2.length;i++){
+    const row=rows2[i];
     if(!row||row.length<3)continue;
     const rd=String(row[dateCol]||'').trim();
     const dm=/^(20\d{2})-(\d{2})/.exec(rd);
@@ -1438,7 +1570,6 @@ async function extractExcel(file){
   const sorted=buildSortedMonths(monthly);
   if(!sorted.length){showStatus('No credit transactions found in Excel statement.','error');return;}
   fillInflowFields(sorted,accountName||'Mono Excel');
-  // Store extraction result for second statement merge
   const xlMonthly=normalizeMonthlyMap(monthly);
   currentExtractionReport={monthly:xlMonthly,bankName:'Mono Excel',parserName:'Excel Column Parser'};
   if(currentMonthlyB)mergeAndFillInflows();
